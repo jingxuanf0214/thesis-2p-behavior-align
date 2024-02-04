@@ -15,20 +15,58 @@ import time
 import seaborn as sns
 from scipy.stats import iqr
 from scipy.ndimage import gaussian_filter1d
+import glob
+
+
+
+def load_roiData_struct(path_to_folder):
+    # Construct the search pattern for files containing 'roiData_struct'
+    search_pattern = path_to_folder + '/*roiData_struct*.mat'
+    
+    # Use glob to find files matching the pattern
+    matching_files = glob.glob(search_pattern)
+    
+    # Assuming you want to load the first matching file
+    if matching_files:
+        # Load the first matching file found
+        try:
+            roi_data = scipy.io.loadmat(matching_files[0])
+        except NotImplementedError as e:
+        # If scipy.io.loadmat fails due to version incompatibility, try with mat73.loadmat
+            print(f"Loading with scipy.io failed: {e}. Trying with mat73.")
+            roi_data = mat73.loadmat(matching_files[0])
+        return roi_data
+    else:
+        print("No matching files found.")
+        return None
 
 def load_intermediate_mat(path_to_folder,trial_num):
-    dff_raw = scipy.io.loadmat(path_to_folder + f'dff raw trial{trial_num}.mat')
-    kinematics_raw = scipy.io.loadmat(path_to_folder + f'kinematics raw trial{trial_num}.mat')
-    preprocessed_vars_ds = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_ds trial{trial_num}.mat')
-    odor_path = os.path.join(path_to_folder, f'preprocessed_vars_odor trial{trial_num}.mat')
-    if os.path.exists(odor_path):
-        preprocessed_vars_odor = scipy.io.loadmat(odor_path)
-    else:
-        preprocessed_vars_odor = None  # or any other placeholder value you find appropriate
-    preprocessed_vars_odor = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_odor trial{trial_num}.mat')
-    roi_data = scipy.io.loadmat(path_to_folder + f'roiData_struct trial{trial_num}.mat')
-    roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['s']))
-    return roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor
+    is_mat73 = 0
+    try:
+        dff_raw = scipy.io.loadmat(path_to_folder + f'dff raw trial{trial_num}.mat')
+        kinematics_raw = scipy.io.loadmat(path_to_folder + f'kinematics raw trial{trial_num}.mat')
+        preprocessed_vars_ds = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_ds trial{trial_num}.mat')
+        odor_path = os.path.join(path_to_folder, f'preprocessed_vars_odor trial{trial_num}.mat')
+        if os.path.exists(odor_path):
+            preprocessed_vars_odor = scipy.io.loadmat(odor_path)
+        else:
+            preprocessed_vars_odor = None  # or any other placeholder value you find appropriate
+        #preprocessed_vars_odor = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_odor trial{trial_num}.mat')
+    except NotImplementedError as e:
+        # If scipy.io.loadmat fails due to version incompatibility, try with mat73.loadmat
+        print(f"Loading with scipy.io failed: {e}. Trying with mat73.")
+        is_mat73 = 1
+        dff_raw = mat73.loadmat(path_to_folder + f'dff raw trial{trial_num}.mat')
+        kinematics_raw = mat73.loadmat(path_to_folder + f'kinematics raw trial{trial_num}.mat')
+        preprocessed_vars_ds = mat73.loadmat(path_to_folder + f'preprocessed_vars_ds trial{trial_num}.mat')
+        odor_path = os.path.join(path_to_folder, f'preprocessed_vars_odor trial{trial_num}.mat')
+        if os.path.exists(odor_path):
+            preprocessed_vars_odor = mat73.loadmat(odor_path)
+        else:
+            preprocessed_vars_odor = None  # or any other placeholder value you find appropriate
+    roi_data = load_roiData_struct(path_to_folder)
+    roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['convertedStruct']))
+    return is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor
 
 def plot_interactive_histogram(series):
     fig, ax = plt.subplots()
@@ -73,13 +111,15 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
         odor_all = preprocessed_vars_odor['odorDown']
         if len(odor_all) == 1:
             df['odor'] = np.squeeze(odor_all)
+        elif len(odor_all) == len(df.time) :
+            df['odor'] = odor_all
         else:
             df['odor'] = odor_all[:,trial_num]
     return df 
 
-roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat('data/',1)
+#roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,1)
 #print(roi_df.head(5))
-behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,1,ball_d = 9)
+#behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,1,ball_d = 9)
 #print(behav_df.head(5))
 
 def reconstruct_path(df, ball_d = 9):
@@ -96,30 +136,34 @@ def reconstruct_path(df, ball_d = 9):
     yPos = (np.cumsum(yChangePos) - yChangePos[0])*mmPerDeg
     return xPos, yPos
 
-xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
-x_range = max(xPos) - min(xPos)
-y_range = max(yPos) - min(yPos)
-aspect_ratio = y_range / x_range
+#xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
 
-# Set figure dimensions based on data range while keeping unit scale the same
-fig_width = 10  # Width of figure in inches
-fig_height = fig_width * aspect_ratio  # Height is scaled according to the aspect ratio of the data
+def plot_fly_traj(xPos, yPos, behav_df, example_path_results):
+    x_range = max(xPos) - min(xPos)
+    y_range = max(yPos) - min(yPos)
+    aspect_ratio = y_range / x_range
 
-plt.figure(figsize=(fig_width, fig_height))
+    # Set figure dimensions based on data range while keeping unit scale the same
+    fig_width = 10  # Width of figure in inches
+    fig_height = fig_width * aspect_ratio  # Height is scaled according to the aspect ratio of the data
 
-plt.scatter(xPos, yPos, c=behav_df.odor[1:], s=3)
-plt.scatter(0, 0, color='red')  # Mark the origin
+    plt.figure(figsize=(fig_width, fig_height))
 
-# Enforce equal aspect ratio so that one unit in x is the same as one unit in y
-plt.gca().set_aspect('equal', adjustable='box')
+    plt.scatter(xPos, yPos, c=behav_df.odor[1:], s=3)
+    plt.scatter(0, 0, color='red')  # Mark the origin
 
-plt.xlabel('x position')
-plt.ylabel('y position')
-plt.title('Fly Trajectory')
+    # Enforce equal aspect ratio so that one unit in x is the same as one unit in y
+    plt.gca().set_aspect('equal', adjustable='box')
 
-# Save the plot
-plt.savefig('results/fly_trajectory.png')
-plt.close()  # Close the plot explicitly after saving to free resources
+    plt.xlabel('x position')
+    plt.ylabel('y position')
+    plt.title('Fly Trajectory')
+
+    # Save the plot
+    plt.savefig(example_path_results+'fly_trajectory.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
+
+#plot_fly_traj(xPos, yPos, behav_df)
 
 def get_roi_seq(roi_df):
     roi_names = roi_df['roiName'].apply(lambda x: x[0])
@@ -129,30 +173,41 @@ def get_roi_seq(roi_df):
     epg_index = roi_epg.index
     hdeltab_seq = roi_hdeltab.str.extract(r'_(\d+)')[0].astype(int)
     hdeltab_seq = hdeltab_seq.to_numpy()
-    if epg_index != None:
+    if epg_index.size>0:
         epg_seq = roi_epg.str.extract(r'_(\d+)')[0].astype(int)
         epg_seq = epg_seq.to_numpy()
     else:
         epg_seq =  None 
     return np.array(roi_names), hdeltab_index, epg_index, hdeltab_seq, epg_seq
 
-roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
-print(hdeltab_sequence)
+#roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
+#print(hdeltab_sequence)
 
-def make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
+def sort_rois(dff_tosort, roi_names, query_idx, query_seq):
+    sorting_indices = np.argsort(query_seq)
+    segment_to_sort = dff_tosort[query_idx]
+    sorted_dff_rois = segment_to_sort[sorting_indices]
+    dff_tosort[query_idx] = sorted_dff_rois
+    roi_names_sort = roi_names[query_idx]
+    roi_names_sort = roi_names_sort[sorting_indices]
+    roi_names[query_idx] = roi_names_sort
+
+
+def make_df_neural(is_mat73, dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
     #TODO
     dff_rois = dff_raw['flDataC']
     dff_time = dff_raw['roiTime']
     # Sort dff_rois according to roi_sequence
     # Ensure roi_sequence is a list of integers that corresponds to the order you want
-    sorting_indices = np.argsort(hdeltab_sequence)
-    dff_all = dff_rois[0]
-    segment_to_sort = dff_rois[0][hdeltab_index]
-    sorted_dff_rois = segment_to_sort[sorting_indices]
-    dff_all[hdeltab_index] = sorted_dff_rois
-    roi_names_sort = roi_names[hdeltab_index]
-    roi_names_sort = roi_names_sort[sorting_indices]
-    roi_names[hdeltab_index] = roi_names_sort
+    if is_mat73:
+        dff_all = np.array(dff_rois)
+    else:
+        dff_all = dff_rois[0]
+    sort_rois(dff_all, roi_names, hdeltab_index, hdeltab_sequence)
+    if epg_index.size > 0:
+        sort_rois(dff_all, roi_names, epg_index, epg_sequence)
+    else:
+        pass
     # Create a new DataFrame for the reordered data
     neural_df = pd.DataFrame()
     neural_df['time'] = np.squeeze(dff_time)
@@ -162,14 +217,14 @@ def make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence
         neural_df[column_name] = np.squeeze(roi_data)
     
     return neural_df
-neural_df = make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
-print(neural_df)
+#neural_df = make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
+#print(neural_df)
 
 
 def combine_df(behav_df, neural_df):
     return pd.merge(behav_df,neural_df,on="time")
 
-combined_df = combine_df(behav_df, neural_df)
+#combined_df = combine_df(behav_df, neural_df)
 #print(combined_df.head(5))
 
 def apply_gaussian_smoothing(series, sigma):
@@ -213,33 +268,37 @@ def calc_nonpara(combined_df):
     
     return stats_df
 
-nonpara_summ_df = calc_nonpara(combined_df)
-print(nonpara_summ_df)
+#nonpara_summ_df = calc_nonpara(combined_df)
+#print(nonpara_summ_df)
 
-plt.figure(figsize=(6, 6))
-plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= nonpara_summ_df['translationalV'])
-plt.colorbar()
-plt.xlabel('mean')
-plt.ylabel('iqr')
-plt.title('mean vs. amplitude')
+def nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results):
+    plt.figure(figsize=(6, 6))
+    plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= nonpara_summ_df[behavior_var])
+    plt.colorbar()
+    plt.xlabel('mean')
+    plt.ylabel('iqr')
+    plt.title('mean vs. amplitude')
 
-# Save the plot
-plt.savefig('results/mean_amp.png')
-plt.close()  # Close the plot explicitly after saving to free resources
+    # Save the plot
+    plt.savefig(example_path_results+'mean_amp.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
 
+#behavior_var = 'translationalV'
+#nonpara_plot_bybehav(nonpara_summ_df, behavior_var)
 
-def extract_heatmap(df, roi_kw, do_normalize):
+def extract_heatmap(df, roi_kw, do_normalize, example_path_results):
     roi_mtx = df[[col for col in df.columns if roi_kw in col]]
     if do_normalize:
         scaler = StandardScaler()
         roi_mtx = scaler.fit_transform(roi_mtx)
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(np.transpose(roi_mtx))
+    plt.savefig(example_path_results+'heatmap_norm.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
     return roi_mtx
 
-roi_mtx = extract_heatmap(combined_df, "hDeltaB", True)
-plt.figure(figsize=(10, 6))
-sns.heatmap(np.transpose(roi_mtx))
-plt.savefig('results/heatmap_norm.png')
-plt.close()  # Close the plot explicitly after saving to free resources
+#roi_mtx = extract_heatmap(combined_df, "hDeltaB", True)
+
 
 
 def fit_sinusoid(neural_df, roi_mtx):
@@ -255,7 +314,7 @@ def fit_sinusoid(neural_df, roi_mtx):
     base_perr = np.zeros(trial_len)
     amp_perr = np.zeros(trial_len)
     for i in range(trial_len):
-        params, params_covariance = optimize.curve_fit(test_func, x_p, roi_mtx[i,0:27],maxfev = 5000)
+        params, params_covariance = optimize.curve_fit(test_func, x_p, roi_mtx[i,:],maxfev = 5000)
         phase_sinfit[i] = x_p[np.argmax(test_func(x_p, params[0], params[1], params[2]))]
         amp_sinfit[i] = np.abs(params[1])
         base_sinfit[i] = params[0]
@@ -267,10 +326,10 @@ def fit_sinusoid(neural_df, roi_mtx):
     paramfit_df = pd.DataFrame({'time': time, 'phase': phase_sinfit, 'baseline': base_sinfit, 'amplitude': amp_sinfit, 'phase_error':phase_perr, "baseline_error": base_perr, "amplitude_error":amp_perr})
     return paramfit_df
 
-paramfit_df = fit_sinusoid(neural_df, roi_mtx)
+#paramfit_df = fit_sinusoid(neural_df, roi_mtx)
 #print(paramfit_df.head(5))
 
-def plot_with_error_shading(df):
+def plot_with_error_shading(df, example_path_results):
     # Set up the figure and subplots
     fig, axs = plt.subplots(3, 1, figsize=(15, 10))
     
@@ -302,9 +361,10 @@ def plot_with_error_shading(df):
     axs[2].set_ylabel('Baseline')
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(example_path_results+'parametric_fit.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
 
-plot_with_error_shading(paramfit_df)
+#plot_with_error_shading(paramfit_df)
 
 def fit_nonparametric(roi_mtx):
     #use iqr as a proxy of height
@@ -370,4 +430,49 @@ def time_series_plot(df):
 # encoding, decoding models 
 # calcium imaging GLM 
 
+base_path = "C:/Users/wilson/OneDrive - Harvard University/Thesis - Wilson lab/2P imaging/preprocessed data/qualified_sessions/one_trial_sessions/"
+#example_path_data = base_path+"20220803-1_hDeltaB_syntGCAMP7f_accu/data/"
+#example_path_results = base_path+"20220803-1_hDeltaB_syntGCAMP7f_accu/results/"
+trial_num = 1
 
+def main(example_path_data, example_path_results):
+    is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
+    behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
+    xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
+    plot_fly_traj(xPos, yPos, behav_df, example_path_results)
+    roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
+    neural_df = make_df_neural(is_mat73, dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
+    combined_df = combine_df(behav_df, neural_df)
+    nonpara_summ_df = calc_nonpara(combined_df)
+    behavior_var = 'translationalV'
+    nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results)
+    roi_mtx = extract_heatmap(combined_df, "hDeltaB", True, example_path_results)
+    paramfit_df = fit_sinusoid(neural_df, roi_mtx)
+    plot_with_error_shading(paramfit_df, example_path_results)
+
+def loop(base_path):
+    # Ensure base_path is a directory
+    if not os.path.isdir(base_path):
+        print(f"{base_path} is not a directory.")
+        return
+
+    # Loop through all items in base_path
+    for folder_name in os.listdir(base_path):
+        folder_path = os.path.join(base_path, folder_name)
+        
+        # Check if the item is a directory
+        if os.path.isdir(folder_path):
+            # Construct pathnames for the 'data' and 'results' subfolders
+            example_path_data = folder_path + '/data/'
+            example_path_results = folder_path + '/results/'
+            
+            # Print or process the constructed pathnames
+            print(f"Data Path: {example_path_data}")
+            print(f"Results Path: {example_path_results}")
+            main(example_path_data, example_path_results)
+
+            # Here, you can add any additional processing you need for these paths
+
+    
+loop(base_path)
+#main(example_path_data, example_path_results)
