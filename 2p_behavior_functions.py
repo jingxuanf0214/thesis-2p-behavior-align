@@ -224,7 +224,7 @@ plt.savefig('results/heatmap_norm.png')
 plt.close()  # Close the plot explicitly after saving to free resources
 
 
-def fit_sinusoid(roi_mtx):
+def fit_sinusoid(neural_df, roi_mtx):
     def test_func(x, dist, amp, phi):
         return dist + amp * np.cos(x + phi)
     timestamp, num_roi = np.shape(roi_mtx)
@@ -233,12 +233,60 @@ def fit_sinusoid(roi_mtx):
     phase_sinfit = np.zeros(trial_len)
     base_sinfit = np.zeros(trial_len)
     amp_sinfit = np.zeros(trial_len)
+    phase_perr = np.zeros(trial_len)
+    base_perr = np.zeros(trial_len)
+    amp_perr = np.zeros(trial_len)
     for i in range(trial_len):
         params, params_covariance = optimize.curve_fit(test_func, x_p, roi_mtx[i,0:27],maxfev = 5000)
         phase_sinfit[i] = x_p[np.argmax(test_func(x_p, params[0], params[1], params[2]))]
         amp_sinfit[i] = np.abs(params[1])
         base_sinfit[i] = params[0]
-    return phase_sinfit, base_sinfit, amp_sinfit, params_covariance
+        perr = np.sqrt(np.diag(params_covariance))
+        phase_perr[i] = perr[2]
+        base_perr[i] = perr[0]
+        amp_perr[i] = perr[1]
+    time = neural_df.time
+    paramfit_df = pd.DataFrame({'time': time, 'phase': phase_sinfit, 'baseline': base_sinfit, 'amplitude': amp_sinfit, 'phase_error':phase_perr, "baseline_error": base_perr, "amplitude_error":amp_perr})
+    return paramfit_df
+
+paramfit_df = fit_sinusoid(neural_df, roi_mtx)
+#print(paramfit_df.head(5))
+
+def plot_with_error_shading(df):
+    # Set up the figure and subplots
+    fig, axs = plt.subplots(3, 1, figsize=(15, 10))
+    
+    # Plot phase
+    axs[0].plot(df['time'], df['phase'], label='Phase', color = 'orange')
+    axs[0].fill_between(df['time'], 
+                        df['phase'] - df['phase_error'], 
+                        df['phase'] + df['phase_error'], color = 'orange', alpha=0.3)
+    axs[0].set_title('Phase')
+    axs[0].set_xlabel('Time')
+    axs[0].set_ylabel('Phase')
+    
+    # Plot amplitude
+    axs[1].plot(df['time'], df['amplitude'], label='Amplitude',color = 'red')
+    axs[1].fill_between(df['time'], 
+                        df['amplitude'] - df['amplitude_error'], 
+                        df['amplitude'] + df['amplitude_error'], color = 'red', alpha=0.3)
+    axs[1].set_title('Amplitude')
+    axs[1].set_xlabel('Time')
+    axs[1].set_ylabel('Amplitude')
+
+    # Plot baseline
+    axs[2].plot(df['time'], df['baseline'], label='Baseline', color = 'green')
+    axs[2].fill_between(df['time'], 
+                        df['baseline'] - df['baseline_error'], 
+                        df['baseline'] + df['baseline_error'], color = 'green', alpha=0.3)
+    axs[2].set_title('Baseline')
+    axs[2].set_xlabel('Time')
+    axs[2].set_ylabel('Baseline')
+
+    plt.tight_layout()
+    plt.show()
+
+plot_with_error_shading(paramfit_df)
 
 def fit_nonparametric(roi_mtx):
     #use iqr as a proxy of height
@@ -250,11 +298,6 @@ def fit_nonparametric(roi_mtx):
     mean_hDeltaB = np.mean(roi_mtx, axis=1)
     # width TODO
     return bump_height, threshold, mean_hDeltaB
-
-def smooth(y, box_pts):
-    box = np.ones(box_pts)/box_pts
-    y_smooth = np.convolve(y, box, mode='same')
-    return y_smooth
 
 # post scopa analysis 
 
