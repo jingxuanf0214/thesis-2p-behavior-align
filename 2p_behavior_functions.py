@@ -122,41 +122,49 @@ plt.savefig('results/fly_trajectory.png')
 plt.close()  # Close the plot explicitly after saving to free resources
 
 def get_roi_seq(roi_df):
-    roi_names = np.array(roi_df['roiName'].apply(lambda x: x[0]))
+    roi_names = roi_df['roiName'].apply(lambda x: x[0])
     roi_hdeltab = roi_names[roi_names.str.contains('hDeltaB')]
     hdeltab_index = roi_hdeltab.index
     roi_epg = roi_names[roi_names.str.contains('EPG')]
     epg_index = roi_epg.index
     hdeltab_seq = roi_hdeltab.str.extract(r'_(\d+)')[0].astype(int)
+    hdeltab_seq = hdeltab_seq.to_numpy()
     if epg_index != None:
         epg_seq = roi_epg.str.extract(r'_(\d+)')[0].astype(int)
+        epg_seq = epg_seq.to_numpy()
     else:
         epg_seq =  None 
-    return hdeltab_index, epg_index, hdeltab_seq.to_numpy(), epg_seq.to_numpy()
+    return np.array(roi_names), hdeltab_index, epg_index, hdeltab_seq, epg_seq
 
-hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
+roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
 print(hdeltab_sequence)
 
-def make_df_neural(dff_raw,hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
+def make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
     #TODO
     dff_rois = dff_raw['flDataC']
     dff_time = dff_raw['roiTime']
     # Sort dff_rois according to roi_sequence
     # Ensure roi_sequence is a list of integers that corresponds to the order you want
     sorting_indices = np.argsort(hdeltab_sequence)
-    sorted_dff_rois = dff_rois[0][sorting_indices]
-    
+    dff_all = dff_rois[0]
+    segment_to_sort = dff_rois[0][hdeltab_index]
+    sorted_dff_rois = segment_to_sort[sorting_indices]
+    dff_all[hdeltab_index] = sorted_dff_rois
+    roi_names_sort = roi_names[hdeltab_index]
+    roi_names_sort = roi_names_sort[sorting_indices]
+    roi_names[hdeltab_index] = roi_names_sort
     # Create a new DataFrame for the reordered data
     neural_df = pd.DataFrame()
     neural_df['time'] = np.squeeze(dff_time)
     # Add each sorted ROI data to the DataFrame with the specified naming convention
-    for i, roi_data in enumerate(sorted_dff_rois, start=1):
-        column_name = f'hDeltaB{i}'  # Generate column name starting from hDeltaB1
+    for i, roi_data in enumerate(dff_all):
+        column_name =  roi_names[i] # Generate column name starting from hDeltaB1
         neural_df[column_name] = np.squeeze(roi_data)
     
     return neural_df
-neural_df = make_df_neural(dff_raw,hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
-#print(neural_df)
+neural_df = make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
+print(neural_df)
+
 
 def combine_df(behav_df, neural_df):
     return pd.merge(behav_df,neural_df,on="time")
