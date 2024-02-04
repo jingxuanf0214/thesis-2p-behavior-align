@@ -78,9 +78,9 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
     return df 
 
 roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat('data/',1)
-print(roi_df.head(5))
+#print(roi_df.head(5))
 behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,1,ball_d = 9)
-print(behav_df.head(5))
+#print(behav_df.head(5))
 
 def reconstruct_path(df, ball_d = 9):
     circum = ball_d * np.pi #circumference of ball, in mm
@@ -122,18 +122,28 @@ plt.savefig('results/fly_trajectory.png')
 plt.close()  # Close the plot explicitly after saving to free resources
 
 def get_roi_seq(roi_df):
-    roi_numbers = roi_df['roiName'].apply(lambda x: x[0]).str.extract(r'_(\d+)')[0].astype(int)
-    return roi_numbers.to_numpy()
+    roi_names = np.array(roi_df['roiName'].apply(lambda x: x[0]))
+    roi_hdeltab = roi_names[roi_names.str.contains('hDeltaB')]
+    hdeltab_index = roi_hdeltab.index
+    roi_epg = roi_names[roi_names.str.contains('EPG')]
+    epg_index = roi_epg.index
+    hdeltab_seq = roi_hdeltab.str.extract(r'_(\d+)')[0].astype(int)
+    if epg_index != None:
+        epg_seq = roi_epg.str.extract(r'_(\d+)')[0].astype(int)
+    else:
+        epg_seq =  None 
+    return hdeltab_index, epg_index, hdeltab_seq.to_numpy(), epg_seq.to_numpy()
 
-roi_sequence = get_roi_seq(roi_df)
-print(roi_sequence)
+hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
+print(hdeltab_sequence)
 
-def make_df_neural(dff_raw,roi_sequence):
+def make_df_neural(dff_raw,hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
+    #TODO
     dff_rois = dff_raw['flDataC']
     dff_time = dff_raw['roiTime']
     # Sort dff_rois according to roi_sequence
     # Ensure roi_sequence is a list of integers that corresponds to the order you want
-    sorting_indices = np.argsort(roi_sequence)
+    sorting_indices = np.argsort(hdeltab_sequence)
     sorted_dff_rois = dff_rois[0][sorting_indices]
     
     # Create a new DataFrame for the reordered data
@@ -145,7 +155,7 @@ def make_df_neural(dff_raw,roi_sequence):
         neural_df[column_name] = np.squeeze(roi_data)
     
     return neural_df
-neural_df = make_df_neural(dff_raw,roi_sequence)
+neural_df = make_df_neural(dff_raw,hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
 #print(neural_df)
 
 def combine_df(behav_df, neural_df):
