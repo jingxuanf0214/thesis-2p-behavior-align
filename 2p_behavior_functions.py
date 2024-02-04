@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import optimize
 import scipy.io
+import os
 import mat73
 from sklearn.preprocessing import StandardScaler
 from scipy.interpolate import interp1d
@@ -19,6 +20,11 @@ def load_intermediate_mat(path_to_folder,trial_num):
     dff_raw = scipy.io.loadmat(path_to_folder + f'dff raw trial{trial_num}.mat')
     kinematics_raw = scipy.io.loadmat(path_to_folder + f'kinematics raw trial{trial_num}.mat')
     preprocessed_vars_ds = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_ds trial{trial_num}.mat')
+    odor_path = os.path.join(path_to_folder, f'preprocessed_vars_odor trial{trial_num}.mat')
+    if os.path.exists(odor_path):
+        preprocessed_vars_odor = scipy.io.loadmat(odor_path)
+    else:
+        preprocessed_vars_odor = None  # or any other placeholder value you find appropriate
     preprocessed_vars_odor = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_odor trial{trial_num}.mat')
     roi_data = scipy.io.loadmat(path_to_folder + f'roiData_struct trial{trial_num}.mat')
     roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['s']))
@@ -63,11 +69,12 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
     threshold = plot_interactive_histogram(df.net_motion)
     df['net_motion_state'] = (df['net_motion']>threshold[0]).astype(int)
     df['heading_adj'] = np.unwrap(df['heading'])
-    odor_all = preprocessed_vars_odor['odorDown']
-    if len(odor_all) == 1:
-        df['odor'] = np.squeeze(odor_all)
-    else:
-        df['odor'] = odor_all[:,trial_num]
+    if preprocessed_vars_odor != None:
+        odor_all = preprocessed_vars_odor['odorDown']
+        if len(odor_all) == 1:
+            df['odor'] = np.squeeze(odor_all)
+        else:
+            df['odor'] = odor_all[:,trial_num]
     return df 
 
 roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat('data/',1)
