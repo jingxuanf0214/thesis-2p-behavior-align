@@ -12,13 +12,40 @@ import cv2
 from IPython.display import display, clear_output
 import time
 import seaborn as sns
+from scipy.stats import iqr
+from scipy.ndimage import gaussian_filter1d
 
 def load_intermediate_mat(path_to_folder,trial_num):
-    dff_raw = scipy.io.loadmat(f'{path_to_folder}dff raw trial{trial_num}.mat')
-    kinematics_raw = scipy.io.loadmat(f'{path_to_folder}kinematics raw trial{trial_num}.mat')
-    preprocessed_vars_ds = scipy.io.loadmat(f'{path_to_folder}preprocessed_vars_ds trial{trial_num}.mat')
-    preprocessed_vars_odor = scipy.io.loadmat(f'{path_to_folder}preprocessed_vars_odor trial{trial_num}.mat')
-    return dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor
+    dff_raw = scipy.io.loadmat(path_to_folder + f'dff raw trial{trial_num}.mat')
+    kinematics_raw = scipy.io.loadmat(path_to_folder + f'kinematics raw trial{trial_num}.mat')
+    preprocessed_vars_ds = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_ds trial{trial_num}.mat')
+    preprocessed_vars_odor = scipy.io.loadmat(path_to_folder + f'preprocessed_vars_odor trial{trial_num}.mat')
+    roi_data = scipy.io.loadmat(path_to_folder + f'roiData_struct trial{trial_num}.mat')
+    roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['s']))
+    return roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor
+
+def plot_interactive_histogram(series):
+    fig, ax = plt.subplots()
+    counts, bins, patches = ax.hist(series, bins=30, color='skyblue', edgecolor='gray')
+    
+    threshold_line = ax.axvline(color='r', linestyle='--')
+    threshold_value = [None]  # Use a list to store the threshold value
+    
+    def onclick(event):
+        # Event handler that draws a vertical line where the user clicks and updates threshold_value
+        threshold_line.set_xdata([event.xdata, event.xdata])
+        threshold_value[0] = event.xdata  # Update the threshold value
+        fig.canvas.draw()
+    
+    # Connect the click event to the handler
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    
+    plt.xlabel('Values')
+    plt.ylabel('Frequency')
+    plt.title('Interactive Histogram')
+    plt.show()
+    
+    return threshold_value  # Return the updated list containing the threshold value
 
 def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9):
     circum = ball_d * np.pi
@@ -27,13 +54,14 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
     dff_time = dff_raw['roiTime']
     df['time'] = np.squeeze(dff_time)
     df['fwV'] = np.squeeze(preprocessed_vars_ds['ftT_fwSpeedDown2']) # unit in mm/s
-    df['sideV'] = np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2']) 
+    df['sideV'] = circum*np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2'])/(2*np.pi)
     df['yawV'] = circum*np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2'])/(2*np.pi) # unit in mm/s
     df['heading'] = np.squeeze(preprocessed_vars_ds['ftT_intHDDown2'])
-    df['abssideV'] = np.abs(np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2']))
+    df['abssideV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2']))/(2*np.pi)
     df['absyawV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2']))/(2*np.pi)
     df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
-    df['net_motion_state'] = (df['net_motion']>2.5).astype(int)
+    threshold = plot_interactive_histogram(df.net_motion)
+    df['net_motion_state'] = (df['net_motion']>threshold[0]).astype(int)
     df['heading_adj'] = np.unwrap(df['heading'])
     odor_all = preprocessed_vars_odor['odorDown']
     if len(odor_all) == 1:
@@ -42,6 +70,10 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
         df['odor'] = odor_all[:,trial_num]
     return df 
 
+roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat('data/',1)
+print(roi_df.head(5))
+behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,1,ball_d = 9)
+print(behav_df.head(5))
 
 def reconstruct_path(df, ball_d = 9):
     circum = ball_d * np.pi #circumference of ball, in mm
@@ -57,12 +89,133 @@ def reconstruct_path(df, ball_d = 9):
     yPos = (np.cumsum(yChangePos) - yChangePos[0])*mmPerDeg
     return xPos, yPos
 
+xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
+x_range = max(xPos) - min(xPos)
+y_range = max(yPos) - min(yPos)
+aspect_ratio = y_range / x_range
+
+# Set figure dimensions based on data range while keeping unit scale the same
+fig_width = 10  # Width of figure in inches
+fig_height = fig_width * aspect_ratio  # Height is scaled according to the aspect ratio of the data
+
+plt.figure(figsize=(fig_width, fig_height))
+
+plt.scatter(xPos, yPos, c=behav_df.odor[1:], s=3)
+plt.scatter(0, 0, color='red')  # Mark the origin
+
+# Enforce equal aspect ratio so that one unit in x is the same as one unit in y
+plt.gca().set_aspect('equal', adjustable='box')
+
+plt.xlabel('x position')
+plt.ylabel('y position')
+plt.title('Fly Trajectory')
+
+# Save the plot
+plt.savefig('results/fly_trajectory.png')
+plt.close()  # Close the plot explicitly after saving to free resources
+
+def get_roi_seq(roi_df):
+    roi_numbers = roi_df['roiName'].apply(lambda x: x[0]).str.extract(r'_(\d+)')[0].astype(int)
+    return roi_numbers.to_numpy()
+
+roi_sequence = get_roi_seq(roi_df)
+print(roi_sequence)
+
+def make_df_neural(dff_raw,roi_sequence):
+    dff_rois = dff_raw['flDataC']
+    dff_time = dff_raw['roiTime']
+    # Sort dff_rois according to roi_sequence
+    # Ensure roi_sequence is a list of integers that corresponds to the order you want
+    sorting_indices = np.argsort(roi_sequence)
+    sorted_dff_rois = dff_rois[0][sorting_indices]
+    
+    # Create a new DataFrame for the reordered data
+    neural_df = pd.DataFrame()
+    neural_df['time'] = np.squeeze(dff_time)
+    # Add each sorted ROI data to the DataFrame with the specified naming convention
+    for i, roi_data in enumerate(sorted_dff_rois, start=1):
+        column_name = f'hDeltaB{i}'  # Generate column name starting from hDeltaB1
+        neural_df[column_name] = np.squeeze(roi_data)
+    
+    return neural_df
+neural_df = make_df_neural(dff_raw,roi_sequence)
+#print(neural_df)
+
+def combine_df(behav_df, neural_df):
+    return pd.merge(behav_df,neural_df,on="time")
+
+combined_df = combine_df(behav_df, neural_df)
+#print(combined_df.head(5))
+
+def apply_gaussian_smoothing(series, sigma):
+    """
+    Applies Gaussian smoothing to a pandas Series.
+    
+    Parameters:
+    - series: The pandas Series to smooth.
+    - sigma: Standard deviation for Gaussian kernel, controlling the smoothing degree.
+    
+    Returns:
+    - A pandas Series containing the smoothed data.
+    """
+    # Ensure the series is a numpy array for processing
+    series_array = series.values
+    
+    # Apply Gaussian smoothing
+    smoothed_array = gaussian_filter1d(series_array, sigma=sigma)
+    
+    # Convert back to pandas Series
+    smoothed_series = pd.Series(smoothed_array, index=series.index)
+    
+    return smoothed_series
+
+def calc_nonpara(combined_df):
+    combined_df = combined_df[(combined_df["fwV"]>0.2) | (combined_df["fwV"]<-0.2)]
+    sigma = 5
+    smooth_fwV = apply_gaussian_smoothing(combined_df.fwV, sigma)
+    smooth_sideV = apply_gaussian_smoothing(combined_df.sideV, sigma)
+    translational_speed = np.sqrt(smooth_fwV**2+smooth_sideV**2)
+    forward_speed = np.abs(smooth_fwV)
+    neural_df_rois = combined_df[[col for col in combined_df.columns if 'hDeltaB' in col]]
+    
+    row_means = neural_df_rois.apply(np.mean, axis=1)
+    
+    # Calculate IQR for each row
+    row_iqrs = neural_df_rois.apply(lambda x: iqr(x, interpolation='midpoint'), axis=1)
+    
+    # Combine mean and IQR into a new DataFrame
+    stats_df = pd.DataFrame({'Mean': row_means, 'IQR': row_iqrs, 'translationalV': translational_speed, 'fwV':forward_speed})
+    
+    return stats_df
+
+nonpara_summ_df = calc_nonpara(combined_df)
+print(nonpara_summ_df)
+
+plt.figure(figsize=(6, 6))
+plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= nonpara_summ_df['translationalV'])
+plt.colorbar()
+plt.xlabel('mean')
+plt.ylabel('iqr')
+plt.title('mean vs. amplitude')
+
+# Save the plot
+plt.savefig('results/mean_amp.png')
+plt.close()  # Close the plot explicitly after saving to free resources
+
+
 def extract_heatmap(df, roi_kw, do_normalize):
-    roi_mtx = df.columns[df.columns.str.contains(roi_kw)]
+    roi_mtx = df[[col for col in df.columns if roi_kw in col]]
     if do_normalize:
         scaler = StandardScaler()
         roi_mtx = scaler.fit_transform(roi_mtx)
     return roi_mtx
+
+roi_mtx = extract_heatmap(combined_df, "hDeltaB", True)
+plt.figure(figsize=(10, 6))
+sns.heatmap(np.transpose(roi_mtx))
+plt.savefig('results/heatmap_norm.png')
+plt.close()  # Close the plot explicitly after saving to free resources
+
 
 def fit_sinusoid(roi_mtx):
     def test_func(x, dist, amp, phi):
