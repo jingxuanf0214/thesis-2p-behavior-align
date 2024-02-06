@@ -134,11 +134,15 @@ def reconstruct_path(df, ball_d = 9):
     xPos = (np.cumsum(xChangePos) - xChangePos[0])*mmPerDeg
     yChangePos = (fwdAngVel[0:-1]*time_bin)*np.cos(zeroedH[0:-1]) + (df.sideV[0:-1]*time_bin)*np.cos(zeroedH[0:-1]+np.pi/4)
     yPos = (np.cumsum(yChangePos) - yChangePos[0])*mmPerDeg
-    return xPos, yPos
+    xPos_padded = pd.concat([xPos, pd.Series(xPos.iloc[-1])], ignore_index=True) 
+    yPos_padded = pd.concat([yPos, pd.Series(yPos.iloc[-1])], ignore_index=True) 
+    df['xPos'] = xPos_padded
+    df['yPos'] = yPos_padded
+    return xPos_padded, yPos_padded
 
 #xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
 
-def plot_fly_traj(xPos, yPos, behav_df, example_path_results):
+def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results):
     x_range = max(xPos) - min(xPos)
     y_range = max(yPos) - min(yPos)
     aspect_ratio = y_range / x_range
@@ -149,7 +153,7 @@ def plot_fly_traj(xPos, yPos, behav_df, example_path_results):
 
     plt.figure(figsize=(fig_width, fig_height))
 
-    plt.scatter(xPos, yPos, c=behav_df.odor[1:], s=3)
+    plt.scatter(xPos, yPos, c=behav_df[label], s=3)
     plt.scatter(0, 0, color='red')  # Mark the origin
 
     # Enforce equal aspect ratio so that one unit in x is the same as one unit in y
@@ -160,10 +164,10 @@ def plot_fly_traj(xPos, yPos, behav_df, example_path_results):
     plt.title('Fly Trajectory')
 
     # Save the plot
-    plt.savefig(example_path_results+'fly_trajectory.png')
+    plt.savefig(example_path_results+'fly_trajectory_colored_by_'+label+'.png')
     plt.close()  # Close the plot explicitly after saving to free resources
 
-#plot_fly_traj(xPos, yPos, behav_df)
+#plot_fly_traj(xPos, yPos, behav_df,'odor', example_path_results)
 
 def get_roi_seq(roi_df):
     roi_names = roi_df['roiName'].apply(lambda x: x[0])
@@ -474,5 +478,5 @@ def loop(base_path):
             # Here, you can add any additional processing you need for these paths
 
     
-loop(base_path)
+#loop(base_path)
 #main(example_path_data, example_path_results)
