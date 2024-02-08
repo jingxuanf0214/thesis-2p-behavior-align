@@ -546,4 +546,5 @@ def create_violin_plots(df_smoothed, example_path_results):
         plt.close()
 
 #create_violin_plots(df_smoothed, example_path_results)
-
+# notes to give Sat
+# connectome data, functions to do analysis, a readme for explaining the dataframe fields, a notebook for visualization 

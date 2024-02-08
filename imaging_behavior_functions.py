@@ -16,8 +16,8 @@ import seaborn as sns
 from scipy.stats import iqr
 from scipy.ndimage import gaussian_filter1d
 import glob
-
-
+import re
+import shutil
 
 def load_roiData_struct(path_to_folder):
     # Construct the search pattern for files containing 'roiData_struct'
@@ -39,6 +39,29 @@ def load_roiData_struct(path_to_folder):
     else:
         print("No matching files found.")
         return None
+
+def find_complete_trials(path_to_folder):
+    # List all .mat files in the folder
+    all_files = [f for f in os.listdir(path_to_folder) if f.endswith('.mat')]
+    
+    # Extract trial numbers from file names
+    trial_numbers = set()
+    for file_name in all_files:
+        match = re.search(r'trial(\d+)', file_name)
+        if match:
+            trial_numbers.add(int(match.group(1)))
+    
+    # Check for complete set of files for each trial
+    complete_trials = []
+    for trial_num in trial_numbers:
+        dff_path = os.path.join(path_to_folder, f'dff raw trial{trial_num}.mat')
+        preprocessed_path = os.path.join(path_to_folder, f'preprocessed_vars_ds trial{trial_num}.mat')
+        # Check if both required files exist
+        if os.path.exists(dff_path) and os.path.exists(preprocessed_path):
+            complete_trials.append(trial_num)
+    
+    # Return the list of complete trial numbers
+    return complete_trials
 
 def load_intermediate_mat(path_to_folder,trial_num):
     is_mat73 = 0
@@ -111,10 +134,10 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
         odor_all = preprocessed_vars_odor['odorDown']
         if len(odor_all) == 1:
             df['odor'] = np.squeeze(odor_all)
-        elif len(odor_all) == len(df.time) :
+        elif len(odor_all) == len(df.time) and len(odor_all.shape) == 1:
             df['odor'] = odor_all
         else:
-            df['odor'] = odor_all[:,trial_num]
+            df['odor'] = odor_all[:,trial_num-1]
     return df 
 
 #roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,1)
@@ -142,7 +165,7 @@ def reconstruct_path(df, ball_d = 9):
 
 #xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
 
-def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results):
+def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results,trial_num):
     x_range = max(xPos) - min(xPos)
     y_range = max(yPos) - min(yPos)
     aspect_ratio = y_range / x_range
@@ -153,7 +176,14 @@ def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results):
 
     plt.figure(figsize=(fig_width, fig_height))
 
-    plt.scatter(xPos, yPos, c=behav_df[label], s=3)
+    if label in behav_df.columns:
+        # If the label exists, color the scatter plot based on the label values
+        plt.scatter(xPos, yPos, c=behav_df[label], s=3)
+        plt.colorbar()  # Optionally, add a color bar to indicate the mapping of color to label values
+    else:
+        # If the label does not exist, plot a normal scatter plot without coloring
+        plt.scatter(xPos, yPos, s=3)
+        label = "nothing"
     plt.scatter(0, 0, color='red')  # Mark the origin
 
     # Enforce equal aspect ratio so that one unit in x is the same as one unit in y
@@ -164,12 +194,27 @@ def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results):
     plt.title('Fly Trajectory')
 
     # Save the plot
-    plt.savefig(example_path_results+'fly_trajectory_colored_by_'+label+'.png')
+    # Construct the full file path
+    file_path = os.path.join(example_path_results, f'fly_trajectory_colored_by_{label}_trial_{str(trial_num)}.png')
+
+    # Extract the directory path
+    dir_path = os.path.dirname(file_path)
+
+    # Check if the directory exists, and create it if it doesn't
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    plt.savefig(file_path)
     plt.close()  # Close the plot explicitly after saving to free resources
 
 #plot_fly_traj(xPos, yPos, behav_df,'odor', example_path_results)
 
 def get_roi_seq(roi_df):
+    roi_df['trialNum'] = roi_df['trialNum'].apply(lambda x: x[0][0])
+    # Find the trial number with the maximum number of rows
+    trial_num_max_rows = roi_df['trialNum'].value_counts().idxmax()
+
+    # Filter the DataFrame to only include rows with that trial number
+    roi_df = roi_df[roi_df['trialNum'] == trial_num_max_rows].reset_index(drop=True)
     roi_names = roi_df['roiName'].apply(lambda x: x[0])
     roi_hdeltab = roi_names[roi_names.str.contains('hDeltaB')]
     hdeltab_index = roi_hdeltab.index
@@ -196,30 +241,36 @@ def sort_rois(dff_tosort, roi_names, query_idx, query_seq):
     roi_names_sort = roi_names_sort[sorting_indices]
     roi_names[query_idx] = roi_names_sort
 
-
-def make_df_neural(is_mat73, dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
-    #TODO
+def load_dff_raw(is_mat73, dff_raw):
     dff_rois = dff_raw['flDataC']
     dff_time = dff_raw['roiTime']
     # Sort dff_rois according to roi_sequence
     # Ensure roi_sequence is a list of integers that corresponds to the order you want
     if is_mat73:
-        dff_all = np.array(dff_rois)
+        dff_all_rois = np.array(dff_rois)
     else:
-        dff_all = dff_rois[0]
-    sort_rois(dff_all, roi_names, hdeltab_index, hdeltab_sequence)
+        dff_all_rois = dff_rois[0]
+    return dff_all_rois, dff_time
+
+def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
+    #TODO
+    sort_rois(dff_all_rois, roi_names, hdeltab_index, hdeltab_sequence)
     if epg_index.size > 0:
-        sort_rois(dff_all, roi_names, epg_index, epg_sequence)
+        sort_rois(dff_all_rois, roi_names, epg_index, epg_sequence)
     else:
         pass
     # Create a new DataFrame for the reordered data
     neural_df = pd.DataFrame()
     neural_df['time'] = np.squeeze(dff_time)
     # Add each sorted ROI data to the DataFrame with the specified naming convention
-    for i, roi_data in enumerate(dff_all):
+    for i, roi_data in enumerate(dff_all_rois):
         column_name =  roi_names[i] # Generate column name starting from hDeltaB1
         neural_df[column_name] = np.squeeze(roi_data)
+    # Identify columns where all values are 0
+    cols_to_drop = [col for col in neural_df.columns if neural_df[col].eq(0).all()]
     
+    # Drop these columns from the DataFrame
+    neural_df.drop(columns=cols_to_drop, inplace=True)
     return neural_df
 #neural_df = make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
 #print(neural_df)
@@ -275,7 +326,7 @@ def calc_nonpara(combined_df):
 #nonpara_summ_df = calc_nonpara(combined_df)
 #print(nonpara_summ_df)
 
-def nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results):
+def nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results, trial_num):
     plt.figure(figsize=(6, 6))
     plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= nonpara_summ_df[behavior_var])
     plt.colorbar()
@@ -284,21 +335,21 @@ def nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results):
     plt.title('mean vs. amplitude')
 
     # Save the plot
-    plt.savefig(example_path_results+'mean_amp.png')
+    plt.savefig(example_path_results+'mean_amp_' + str(trial_num) +'.png')
     plt.close()  # Close the plot explicitly after saving to free resources
 
 #behavior_var = 'translationalV'
 #nonpara_plot_bybehav(nonpara_summ_df, behavior_var)
 
-def extract_heatmap(df, roi_kw, do_normalize, example_path_results):
-    roi_mtx = df[[col for col in df.columns if roi_kw in col]]
+def extract_heatmap(df, roi_kw, do_normalize, example_path_results, trial_num):
+    roi_mtx = df[[col for col in df.columns if roi_kw.lower() in col.lower()]]
     if do_normalize:
         scaler = StandardScaler()
         roi_mtx = scaler.fit_transform(roi_mtx)
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(np.transpose(roi_mtx))
-    plt.savefig(example_path_results+'heatmap_norm.png')
-    plt.close()  # Close the plot explicitly after saving to free resources
+        plt.figure(figsize=(10, 6))
+        sns.heatmap(np.transpose(roi_mtx))
+        plt.savefig(example_path_results+'heatmap_norm' + str(trial_num)+ '.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
     return roi_mtx
 
 #roi_mtx = extract_heatmap(combined_df, "hDeltaB", True)
@@ -333,39 +384,42 @@ def fit_sinusoid(neural_df, roi_mtx):
 #paramfit_df = fit_sinusoid(neural_df, roi_mtx)
 #print(paramfit_df.head(5))
 
-def plot_with_error_shading(df, example_path_results):
+def plot_with_error_shading(df, example_path_results,trial_num):
     # Set up the figure and subplots
     fig, axs = plt.subplots(3, 1, figsize=(15, 10))
     
     # Plot phase
     axs[0].plot(df['time'], df['phase'], label='Phase', color = 'orange')
-    axs[0].fill_between(df['time'], 
-                        df['phase'] - df['phase_error'], 
-                        df['phase'] + df['phase_error'], color = 'orange', alpha=0.3)
+    phase_error_threshold = np.percentile(df['phase_error'], 90)
+    high_error_times = df['time'][df['phase_error'] > phase_error_threshold]
+    for time in high_error_times:
+        axs[0].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
     axs[0].set_title('Phase')
     axs[0].set_xlabel('Time')
     axs[0].set_ylabel('Phase')
     
     # Plot amplitude
     axs[1].plot(df['time'], df['amplitude'], label='Amplitude',color = 'red')
-    axs[1].fill_between(df['time'], 
-                        df['amplitude'] - df['amplitude_error'], 
-                        df['amplitude'] + df['amplitude_error'], color = 'red', alpha=0.3)
+    amp_error_threshold = np.percentile(df['amplitude_error'], 90)
+    high_error_times = df['time'][df['amplitude_error'] > amp_error_threshold]
+    for time in high_error_times:
+        axs[1].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
     axs[1].set_title('Amplitude')
     axs[1].set_xlabel('Time')
     axs[1].set_ylabel('Amplitude')
 
     # Plot baseline
     axs[2].plot(df['time'], df['baseline'], label='Baseline', color = 'green')
-    axs[2].fill_between(df['time'], 
-                        df['baseline'] - df['baseline_error'], 
-                        df['baseline'] + df['baseline_error'], color = 'green', alpha=0.3)
+    base_error_threshold = np.percentile(df['baseline_error'], 90)
+    high_error_times = df['time'][df['baseline_error'] > base_error_threshold]
+    for time in high_error_times:
+        axs[2].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
     axs[2].set_title('Baseline')
     axs[2].set_xlabel('Time')
     axs[2].set_ylabel('Baseline')
 
     plt.tight_layout()
-    plt.savefig(example_path_results+'parametric_fit.png')
+    plt.savefig(example_path_results+'parametric_fit' + str(trial_num) +'.png')
     plt.close()  # Close the plot explicitly after saving to free resources
 
 #plot_with_error_shading(paramfit_df)
@@ -434,27 +488,45 @@ def time_series_plot(df):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "C:/Users/wilson/OneDrive - Harvard University/Thesis - Wilson lab/2P imaging/preprocessed data/qualified_sessions/one_trial_sessions/"
-#example_path_data = base_path+"20220803-1_hDeltaB_syntGCAMP7f_accu/data/"
-#example_path_results = base_path+"20220803-1_hDeltaB_syntGCAMP7f_accu/results/"
-trial_num = 1
-
-def main(example_path_data, example_path_results):
+base_path = "C:/Users/wilson/OneDrive - Harvard University/Thesis - Wilson lab/2P imaging/preprocessed data/qualified_sessions/multi_trial_sessions/"
+#example_path_data = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/data/"
+#example_path_results = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/results/"
+#trial_num = 1
+#qualified_trials = find_complete_trials(example_path_data)
+#print(qualified_trials)
+#is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
+#print(roi_df.head(10))
+    
+def main(example_path_data, example_path_results,trial_num):
     is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
     behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
     xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
-    plot_fly_traj(xPos, yPos, behav_df, example_path_results)
+    plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results,trial_num)
     roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
-    neural_df = make_df_neural(is_mat73, dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
+    dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
+    if len(dff_all_rois) < len(hdeltab_index):
+        print("raw df/f matrix dimension doesn't align with ROI names")
+        return
+    neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
     combined_df = combine_df(behav_df, neural_df)
     nonpara_summ_df = calc_nonpara(combined_df)
     behavior_var = 'translationalV'
-    nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results)
-    roi_mtx = extract_heatmap(combined_df, "hDeltaB", True, example_path_results)
+    nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results,trial_num)
+    roi_mtx = extract_heatmap(combined_df, "hDeltaB", True, example_path_results, trial_num)
     paramfit_df = fit_sinusoid(neural_df, roi_mtx)
-    plot_with_error_shading(paramfit_df, example_path_results)
+    plot_with_error_shading(paramfit_df, example_path_results, trial_num)
 
-def loop(base_path):
+def loop_trial(example_path_data, example_path_results):
+    qualified_trials = find_complete_trials(example_path_data)
+    if qualified_trials == []:
+        return
+    print(f"qualified trial numbers are {qualified_trials}")
+    for trial_num in qualified_trials:
+        main(example_path_data, example_path_results,trial_num)
+
+#loop_trial(example_path_data, example_path_results)
+
+def loop_folder(base_path):
     # Ensure base_path is a directory
     if not os.path.isdir(base_path):
         print(f"{base_path} is not a directory.")
@@ -469,14 +541,73 @@ def loop(base_path):
             # Construct pathnames for the 'data' and 'results' subfolders
             example_path_data = folder_path + '/data/'
             example_path_results = folder_path + '/results/'
-            
+            # Check if the results folder is empty
+            if os.path.exists(example_path_results) and os.listdir(example_path_results):
+                print(f"Results folder is not empty, skipping: {example_path_results}")
+                continue  # Skip to the next folder
+
             # Print or process the constructed pathnames
             print(f"Data Path: {example_path_data}")
             print(f"Results Path: {example_path_results}")
-            main(example_path_data, example_path_results)
+            loop_trial(example_path_data, example_path_results)
 
             # Here, you can add any additional processing you need for these paths
 
     
-#loop(base_path)
+#loop_folder(base_path)
 #main(example_path_data, example_path_results)
+
+def move_folders_with_empty_results(pathname):
+    # Create the 'no_results' directory if it doesn't exist
+    no_results_path = os.path.join(pathname, 'no_results')
+    if not os.path.exists(no_results_path):
+        os.makedirs(no_results_path)
+        print(f"Created directory: {no_results_path}")
+
+    # Loop through all items in pathname
+    for folder_name in os.listdir(pathname):
+        folder_path = os.path.join(pathname, folder_name)
+        
+        # Skip the 'no_results' folder itself
+        if folder_name == 'no_results' or folder_name == 'to_check':
+            continue
+        
+        # Check if the item is a directory
+        if os.path.isdir(folder_path):
+            # Construct the pathname for the 'results' subfolder
+            results_folder_path = os.path.join(folder_path, 'results')
+            
+            # Check if 'results' subfolder exists and is empty
+            if os.path.exists(results_folder_path) and not os.listdir(results_folder_path):
+                # Move the whole folder to 'no_results'
+                dest_path = os.path.join(no_results_path, folder_name)
+                shutil.move(folder_path, dest_path)
+                print(f"Moved {folder_path} to {dest_path}")
+
+
+
+#move_folders_with_empty_results(base_path)
+                
+def move_folders_containing_odor(pathname):
+    # Create the 'with_odor' directory if it doesn't exist
+    with_odor_path = os.path.join(pathname, 'with_odor')
+    if not os.path.exists(with_odor_path):
+        os.makedirs(with_odor_path)
+        print(f"Created directory: {with_odor_path}")
+
+    # Loop through all items in pathname
+    for folder_name in os.listdir(pathname):
+        folder_path = os.path.join(pathname, folder_name)
+        
+        # Skip the 'with_odor' folder itself
+        if folder_name.lower() == 'with_odor':
+            continue
+        
+        # Check if the item is a directory and its name contains 'odor'
+        if os.path.isdir(folder_path) and 'odor' in folder_name.lower():
+            # Move the folder to 'with_odor'
+            dest_path = os.path.join(with_odor_path, folder_name)
+            shutil.move(folder_path, dest_path)
+            print(f"Moved {folder_path} to {dest_path}")
+
+move_folders_containing_odor(base_path)
