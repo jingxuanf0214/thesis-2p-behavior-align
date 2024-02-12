@@ -557,6 +557,10 @@ def loop_folder(base_path):
 #loop_folder(base_path)
 #main(example_path_data, example_path_results)
 
+
+##########################################################################
+# files transfer 
+
 def move_folders_with_empty_results(pathname):
     # Create the 'no_results' directory if it doesn't exist
     no_results_path = os.path.join(pathname, 'no_results')
@@ -610,4 +614,4 @@ def move_folders_containing_odor(pathname):
             shutil.move(folder_path, dest_path)
             print(f"Moved {folder_path} to {dest_path}")
 
-move_folders_containing_odor(base_path)
+#move_folders_containing_odor(base_path)

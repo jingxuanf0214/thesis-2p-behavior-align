@@ -31,8 +31,9 @@ is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_va
 behav_df = imaging_behavior_functions.make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
 xPos, yPos = imaging_behavior_functions.reconstruct_path(behav_df, ball_d = 9)
 roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = imaging_behavior_functions.get_roi_seq(roi_df)
-neural_df = imaging_behavior_functions.make_df_neural(is_mat73, dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
-combined_df = imaging_behavior_functions.combine_df(behav_df, neural_df)
+dff_all_rois, dff_time = imaging_behavior_functions.load_dff_raw(is_mat73, dff_raw)
+neural_df = imaging_behavior_functions.make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
+#combined_df = imaging_behavior_functions.combine_df(behav_df, neural_df)
 
 def store_odor_on_off_times(behav_df):
     # Initialize an empty list to store (on_time, off_time) tuples
@@ -59,9 +60,9 @@ def store_odor_on_off_times(behav_df):
     
     return on_off_times
 
-odor_events = store_odor_on_off_times(behav_df)
+#odor_events = store_odor_on_off_times(behav_df)
 #print(odor_events)
-def cluster_odor_events(events, time_interval_threshold):
+def cluster_odor_events_temporal(events, time_interval_threshold):
     """
     Clusters odor events based on temporal closeness.
     
@@ -102,12 +103,10 @@ def label_df_with_clusters(df, clusters):
             df.loc[(df['time'] >= event[0]) & (df['time'] <= event[1]), 'cluster_label_temporal'] = i
     return df
 
-# Example usage
-time_interval_threshold = 16  # Assuming time is in seconds or an equivalent unit
 
-clusters = cluster_odor_events(odor_events, time_interval_threshold)
+#clusters = cluster_odor_events_temporal(odor_events, time_interval_threshold)
 #print(clusters)
-behav_df = label_df_with_clusters(behav_df, clusters)
+#behav_df = label_df_with_clusters(behav_df, clusters)
 #print(behav_df.head(5))
 #print("Odor clusters (start, end):", clusters)
 
@@ -139,7 +138,7 @@ def label_df_with_soft_clusters(df, clusters, time_interval_threshold):
         df.loc[(df['time'] >= extended_start) & (df['time'] <= extended_end), 'soft_cluster_label_temporal'] = i
 
     return df
-behav_df = label_df_with_soft_clusters(behav_df, clusters, time_interval_threshold)
+#behav_df = label_df_with_soft_clusters(behav_df, clusters, time_interval_threshold)
 
 def plot_odor_cluster_tp(behav_df, label, example_path_results):
     xPos = behav_df.xPos
@@ -168,16 +167,16 @@ def plot_odor_cluster_tp(behav_df, label, example_path_results):
     plt.savefig(example_path_results+'odor_cluster_'+label+'.png')
     plt.close()  # Close the plot explicitly after saving to free resources
 
-plot_odor_cluster_tp(behav_df, 'soft_cluster_label_temporal', example_path_results)
-plot_odor_cluster_tp(behav_df, 'cluster_label_temporal', example_path_results)
+#plot_odor_cluster_tp(behav_df, 'soft_cluster_label_temporal', example_path_results)
+#plot_odor_cluster_tp(behav_df, 'cluster_label_temporal', example_path_results)
 
-def calculate_centroids(df, odor_threshold):
+def calculate_centroids(df):
     """
     Calculates centroids for each odor on segment.
     """
     centroids = []
     segment_indices = []
-    is_odor_on = df['odor'] > odor_threshold
+    is_odor_on = df['odor'] > 5
     start_idx = None
     
     for i in range(len(df)):
@@ -199,8 +198,8 @@ def calculate_centroids(df, odor_threshold):
         segment_indices.append((start_idx, len(df)-1))
     
     return centroids, segment_indices
-centroids, segment_indices = calculate_centroids(behav_df, odor_threshold)
-print(centroids)
+#centroids, segment_indices = calculate_centroids(behav_df)
+#print(centroids)
 
 def cluster_centroids_kmeans(centroids, k):
     """
@@ -224,8 +223,7 @@ def cluster_centroids_kmeans(centroids, k):
     
     return cluster_labels
 
-k = 8
-cluster_labels = cluster_centroids_kmeans(centroids, k)
+#cluster_labels = cluster_centroids_kmeans(centroids, k)
 
 def assign_spatial_cluster_labels(df, segment_indices, cluster_labels):
     """
@@ -238,7 +236,7 @@ def assign_spatial_cluster_labels(df, segment_indices, cluster_labels):
     
     return df
 
-behav_df = assign_spatial_cluster_labels(behav_df, segment_indices, cluster_labels)
+#behav_df = assign_spatial_cluster_labels(behav_df, segment_indices, cluster_labels)
 
 
 def plot_odor_cluster_sp(behav_df, centroids, cluster_labels, example_path_results):
@@ -271,7 +269,7 @@ def plot_odor_cluster_sp(behav_df, centroids, cluster_labels, example_path_resul
     plt.savefig(example_path_results+'odor_cluster_spatial.png')
     plt.close()  # Close the plot explicitly after saving to free resources
 
-plot_odor_cluster_sp(behav_df, centroids, cluster_labels, example_path_results)
+#plot_odor_cluster_sp(behav_df, centroids, cluster_labels, example_path_results)
 
 def smooth_circular_variable(series, sigma=2):
     """Smooths a circular variable by smoothing its sine and cosine components."""
@@ -438,9 +436,9 @@ def calculate_movement_metrics(df, window_size):
     
     return results_df
 
-window_size = 30
-results_df = calculate_movement_metrics(behav_df, window_size)
-print(results_df.head(5))
+#window_size = 30
+#results_df = calculate_movement_metrics(behav_df, window_size)
+#print(results_df.head(5))
 
 def pad_nan(df, num_front_pad, num_end_pad):
     """
@@ -465,17 +463,6 @@ def pad_nan(df, num_front_pad, num_end_pad):
     
     return padded_df
 
-
-num_front_pad = window_size // 2  # For even window sizes; adjust as needed
-num_end_pad = window_size-num_front_pad-1
-
-# Pad the result DataFrame
-padded_result_df = pad_nan(results_df, num_front_pad, num_end_pad)
-
-print(padded_result_df.head(6))
-
-imaging_behavior_functions.plot_fly_traj(behav_df.xPos, behav_df.yPos, padded_result_df, 'Heading_Variance', example_path_results)
-
 def extract_features(df, window_size=25, sigma=2):
     """
     Extracts features and calculates descriptive statistics for each segment.
@@ -487,21 +474,21 @@ def extract_features(df, window_size=25, sigma=2):
     Returns:
     - DataFrame with summary statistics for each segment.
     """
-    df_smoothed = df.copy()
+    smoothed_df = df.copy()
     # Assuming gaussian smoothing function for velocity variables exists as gaussian_smooth
     for col in ['fwV', 'sideV', 'yawV']:
-        df_smoothed[col + '_smoothed'] = imaging_behavior_functions.apply_gaussian_smoothing(df[col], sigma=sigma)
+        smoothed_df[col + '_smoothed'] = imaging_behavior_functions.apply_gaussian_smoothing(df[col], sigma=sigma)
     
     # Smooth heading direction
-    df_smoothed['heading_smoothed'] = smooth_circular_variable(df['heading'], sigma=sigma)
-    df_smoothed['straightness_smoothed'] = calculate_straightness(df, window_size)
+    smoothed_df['heading_smoothed'] = smooth_circular_variable(df['heading'], sigma=sigma)
+    smoothed_df['straightness_smoothed'] = calculate_straightness(df, window_size)
     # Initialize list to store summary statistics
     summaries = []
     
     # Calculate statistics for each cluster and non-odor zones (label 0)
-    cluster_labels = df_smoothed['soft_cluster_label_temporal'].unique()
+    cluster_labels = smoothed_df['soft_cluster_label_temporal'].unique()
     for label in cluster_labels:
-        segment_df = df_smoothed[df_smoothed['soft_cluster_label_temporal'] == label]
+        segment_df = smoothed_df[smoothed_df['soft_cluster_label_temporal'] == label]
         duration = segment_df['time'].iloc[-1] - segment_df['time'].iloc[0]
         
         summary = {
@@ -520,13 +507,13 @@ def extract_features(df, window_size=25, sigma=2):
     # Convert summaries to DataFrame for easy analysis
     summary_df = pd.DataFrame(summaries)
     
-    return df_smoothed, summary_df
+    return smoothed_df, summary_df
 
-#df_smoothed, summary_df = extract_features(behav_df, sigma=2)
-#print(df_smoothed.head())  # To see the original DataFrame with added smoothed columns
+#smoothed_df, summary_df = extract_features(behav_df, sigma=2)
+#print(smoothed_df.head())  # To see the original DataFrame with added smoothed columns
 #print(summary_df)          # To see the summary statistics
 
-def create_violin_plots(df_smoothed, example_path_results):
+def create_violin_plots(smoothed_df, example_path_results):
     """
     Creates violin plots for each smoothed variable across clusters from summary_df.
 
@@ -534,17 +521,52 @@ def create_violin_plots(df_smoothed, example_path_results):
     - summary_df: DataFrame containing summary statistics for each cluster.
     """
     # Filter out columns to plot (exclude non-smoothed variables and non-statistical columns)
-    smoothed_vars = [col for col in df_smoothed.columns if '_smoothed' in col]
+    smoothed_vars = [col for col in smoothed_df.columns if '_smoothed' in col]
     
     for var in smoothed_vars:
         plt.figure(figsize=(10, 6))  # Set figure size for each plot
-        sns.violinplot(x='soft_cluster_label_temporal', y=var, data=df_smoothed)
+        sns.violinplot(x='soft_cluster_label_temporal', y=var, data=smoothed_df)
         plt.title(var)
         plt.xlabel('cluster label')  # Remove x-axis label
         plt.ylabel('value')  # Remove y-axis label
         plt.savefig(example_path_results+f'{var}.png')
         plt.close()
 
-#create_violin_plots(df_smoothed, example_path_results)
+#create_violin_plots(smoothed_df, example_path_results)
+
+# summary function for acquiring preprocessed dfs
+def analysis_dfs(behav_df, time_interval_threshold, k, window_size):
+    odor_events = store_odor_on_off_times(behav_df)
+    # cluster odor encounter by time proximity
+    clusters = cluster_odor_events_temporal(odor_events, time_interval_threshold)
+    # update behavioral df -> add temporal cluster labels
+    behav_df = label_df_with_clusters(behav_df, clusters)
+    # update behavioral df -> add soft temporal cluster labels
+    behav_df = label_df_with_soft_clusters(behav_df, clusters, time_interval_threshold)
+    # plotting and save
+    plot_odor_cluster_tp(behav_df, 'soft_cluster_label_temporal', example_path_results)
+    plot_odor_cluster_tp(behav_df, 'cluster_label_temporal', example_path_results)
+    # spatial clustering
+    centroids, segment_indices = calculate_centroids(behav_df)
+    cluster_labels = cluster_centroids_kmeans(centroids, k)
+    behav_df = assign_spatial_cluster_labels(behav_df, segment_indices, cluster_labels)
+    plot_odor_cluster_sp(behav_df, centroids, cluster_labels, example_path_results)
+    results_df = calculate_movement_metrics(behav_df, window_size)
+    num_front_pad = window_size // 2  # For even window sizes; adjust as needed
+    num_end_pad = window_size-num_front_pad-1
+    # Pad the result DataFrame
+    padded_result_df = pad_nan(results_df, num_front_pad, num_end_pad)
+    smoothed_df, summary_df = extract_features(behav_df, sigma=2)
+    create_violin_plots(smoothed_df, example_path_results)
+    return behav_df, padded_result_df, smoothed_df
+    #imaging_behavior_functions.plot_fly_traj(behav_df.xPos, behav_df.yPos, padded_result_df, 'Heading_Variance', example_path_results)
+
+time_interval_threshold = 16  # Assuming time is in seconds or an equivalent unit
+k = 8
+window_size = 30
+behav_df, padded_result_df, smoothed_df = analysis_dfs(behav_df, time_interval_threshold, k, window_size)
+combined_df = imaging_behavior_functions.combine_df(behav_df, neural_df)
+#imaging_behavior_functions.calc_nonpara(combined_df)
+#imaging_behavior_functions.nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results, trial_num)
 # notes to give Sat
 # connectome data, functions to do analysis, a readme for explaining the dataframe fields, a notebook for visualization 
