@@ -19,6 +19,18 @@ import glob
 import re
 import shutil
 
+def is_notebook():
+    try:
+        from IPython import get_ipython
+        if 'IPKernelApp' not in get_ipython().config:  # Kernel not running
+            return False
+    except ImportError:
+        return False  # IPython is not installed
+    except AttributeError:
+        return False  # get_ipython() didn't return Configurable, not in notebook
+
+    return True
+
 def load_roiData_struct(path_to_folder):
     # Construct the search pattern for files containing 'roiData_struct'
     search_pattern = path_to_folder + '/*roiData_struct*.mat'
@@ -112,7 +124,7 @@ def plot_interactive_histogram(series):
     plt.title('Interactive Histogram')
     plt.show()
     
-    return threshold_value  # Return the updated list containing the threshold value
+    return threshold_value[0]  # Return the updated list containing the threshold value
 
 def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9):
     circum = ball_d * np.pi
@@ -127,8 +139,12 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
     df['abssideV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2']))/(2*np.pi)
     df['absyawV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2']))/(2*np.pi)
     df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
-    threshold = plot_interactive_histogram(df.net_motion)
-    df['net_motion_state'] = (df['net_motion']>threshold[0]).astype(int)
+    in_notebook = is_notebook()
+    if in_notebook:
+        threshold = np.percentile(df.net_motion,5)
+    else:
+        threshold = plot_interactive_histogram(df.net_motion)
+    df['net_motion_state'] = (df['net_motion']>threshold).astype(int)
     df['heading_adj'] = np.unwrap(df['heading'])
     if preprocessed_vars_odor != None:
         odor_all = preprocessed_vars_odor['odorDown']
