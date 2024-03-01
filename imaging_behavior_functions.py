@@ -359,6 +359,8 @@ def nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results, tr
 
 def extract_heatmap(df, roi_kw, do_normalize, example_path_results, trial_num):
     roi_mtx = df[[col for col in df.columns if roi_kw.lower() in col.lower()]]
+    if roi_mtx.empty:
+        return None
     if do_normalize:
         scaler = StandardScaler()
         roi_mtx = scaler.fit_transform(roi_mtx)
@@ -498,16 +500,51 @@ def phase_plot(df,height,width,ind_l, ind_h):
     ax.plot(df.time,2*np.pi-df['phase_sinfit'], color = 'orange')
 
 
-def time_series_plot(df):
-    pass
+def plot_time_series(neural_df, behav_df):
+    neural_columns = len(neural_df.columns.drop('time'))
+    behav_columns = len(['fwV', 'yawV', 'sideV', 'heading'])
+    total_plots = neural_columns + behav_columns
+    
+    # Create a figure with subplots
+    fig, axs = plt.subplots(total_plots, 1, figsize=(12, 3 * total_plots), sharex=True)
+    
+    # Plot each column from neural_df as a subplot
+    for i, column in enumerate(neural_df.columns.drop('time')):
+        axs[i].plot(neural_df['time'], neural_df[column], label=column)
+        axs[i].set_ylabel(column)
+        axs[i].legend(loc='upper right')
+    
+    # Plot specified columns from behav_df as subplots
+    behav_columns = ['fwV', 'yawV', 'sideV', 'heading']
+    for j, column in enumerate(behav_columns, start=neural_columns):
+        if column in behav_df.columns:
+            axs[j].plot(behav_df['time'], behav_df[column], label=column, linestyle='--')
+            axs[j].set_ylabel(column)
+            axs[j].legend(loc='upper right')
+    
+    # Check if 'odor' column exists and shade where odor > 5
+    if 'odor' in behav_df.columns:
+        odor_mask = behav_df['odor'] > 5
+        # Apply shading to all subplots
+        for ax in axs:
+            ax.fill_between(behav_df['time'], ax.get_ylim()[0], ax.get_ylim()[1], where=odor_mask, color='red', alpha=0.3, transform=ax.get_xaxis_transform())
+    
+    # Set common labels
+    plt.xlabel('Time')
+    fig.suptitle('Neural and Behavioral Data Over Time', fontsize=16)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout to make room for the suptitle
+    
+    plt.savefig(example_path_results+'time_series_plotting' + str(trial_num) +'.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
 
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "C:/Users/wilson/OneDrive - Harvard University/Thesis - Wilson lab/2P imaging/preprocessed data/qualified_sessions/multi_trial_sessions/"
-#example_path_data = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/data/"
-#example_path_results = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/results/"
-#trial_num = 1
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/for_alex/"
+example_path_data = base_path+"20240123-2_SA123_gcamp7f_dur5s_isi25s/analysis/data/"
+example_path_results = base_path+"20240123-2_SA123_gcamp7f_dur5s_isi25s/analysis/results/"
+trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
 #is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
@@ -529,8 +566,13 @@ def main(example_path_data, example_path_results,trial_num):
     behavior_var = 'translationalV'
     nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results,trial_num)
     roi_mtx = extract_heatmap(combined_df, "hDeltaB", True, example_path_results, trial_num)
-    paramfit_df = fit_sinusoid(neural_df, roi_mtx)
-    plot_with_error_shading(paramfit_df, example_path_results, trial_num)
+    if not (roi_mtx is None):
+        paramfit_df = fit_sinusoid(neural_df, roi_mtx)
+        plot_with_error_shading(paramfit_df, example_path_results, trial_num)
+    else:
+        plot_time_series(neural_df, behav_df)
+
+main(example_path_data, example_path_results,trial_num)
 
 def loop_trial(example_path_data, example_path_results):
     qualified_trials = find_complete_trials(example_path_data)
