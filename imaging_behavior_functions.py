@@ -100,7 +100,7 @@ def load_intermediate_mat(path_to_folder,trial_num):
         else:
             preprocessed_vars_odor = None  # or any other placeholder value you find appropriate
     roi_data = load_roiData_struct(path_to_folder)
-    roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['convertedStruct']))
+    roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['convertedStruct'],axis=1))
     return is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor
 
 def plot_interactive_histogram(series):
