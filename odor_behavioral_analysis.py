@@ -21,9 +21,9 @@ import glob
 from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
 
-base_path = "C:/Users/wilson/OneDrive - Harvard University/Thesis - Wilson lab/2P imaging/preprocessed data/qualified_sessions/one_trial_sessions/"
-example_path_data = base_path+"20230814-1_EPGhDeltaB_syntGCAMP7f_odor_apple_patchy/data/"
-example_path_results = base_path+"20230814-1_EPGhDeltaB_syntGCAMP7f_odor_apple_patchy/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/bar_jump/"
+example_path_data = base_path+"20230518-8_hDeltaB_EPG_syntGCAMP7f_fly2_long_jump_15/data/"
+example_path_results = base_path+"20230518-8_hDeltaB_EPG_syntGCAMP7f_fly2_long_jump_15/results/"
 trial_num = 1
 odor_threshold = 5
 
@@ -561,11 +561,11 @@ def analysis_dfs(behav_df, time_interval_threshold, k, window_size):
     return behav_df, padded_result_df, smoothed_df
     #imaging_behavior_functions.plot_fly_traj(behav_df.xPos, behav_df.yPos, padded_result_df, 'Heading_Variance', example_path_results)
 
-time_interval_threshold = 16  # Assuming time is in seconds or an equivalent unit
-k = 8
-window_size = 30
-behav_df, padded_result_df, smoothed_df = analysis_dfs(behav_df, time_interval_threshold, k, window_size)
-combined_df = imaging_behavior_functions.combine_df(behav_df, neural_df)
+#time_interval_threshold = 16  # Assuming time is in seconds or an equivalent unit
+#k = 8
+#window_size = 30
+#behav_df, padded_result_df, smoothed_df = analysis_dfs(behav_df, time_interval_threshold, k, window_size)
+#combined_df = imaging_behavior_functions.combine_df(behav_df, neural_df)
 #imaging_behavior_functions.calc_nonpara(combined_df)
 #imaging_behavior_functions.nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results, trial_num)
 # notes to give Sat
