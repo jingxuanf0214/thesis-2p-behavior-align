@@ -236,6 +236,8 @@ def get_roi_seq(roi_df):
     hdeltab_index = roi_hdeltab.index
     roi_epg = roi_names[roi_names.str.contains('EPG')]
     epg_index = roi_epg.index
+    roi_fr1 = roi_names[roi_names.str.contains('FR1') & ~roi_names.str.contains('CRE')]
+    fr1_index = roi_fr1.index
     hdeltab_seq = roi_hdeltab.str.extract(r'_(\d+)')[0].astype(int)
     hdeltab_seq = hdeltab_seq.to_numpy()
     if epg_index.size>0:
@@ -243,7 +245,12 @@ def get_roi_seq(roi_df):
         epg_seq = epg_seq.to_numpy()
     else:
         epg_seq =  None 
-    return np.array(roi_names), hdeltab_index, epg_index, hdeltab_seq, epg_seq
+    if fr1_index.size>0:
+        fr1_seq = roi_fr1.str.extract(r'_(\d+)')[0].astype(int)
+        fr1_seq = fr1_seq.to_numpy()
+    else:
+        fr1_seq =  None 
+    return np.array(roi_names), hdeltab_index, epg_index, fr1_index,hdeltab_seq, epg_seq,fr1_seq
 
 #roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
 #print(hdeltab_sequence)
@@ -268,11 +275,15 @@ def load_dff_raw(is_mat73, dff_raw):
         dff_all_rois = dff_rois[0]
     return dff_all_rois, dff_time
 
-def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence):
+def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence,fr1_sequence):
     #TODO
     sort_rois(dff_all_rois, roi_names, hdeltab_index, hdeltab_sequence)
     if epg_index.size > 0:
         sort_rois(dff_all_rois, roi_names, epg_index, epg_sequence)
+    else:
+        pass
+    if fr1_index.size > 0:
+        sort_rois(dff_all_rois, roi_names, fr1_index, fr1_sequence)
     else:
         pass
     # Create a new DataFrame for the reordered data
@@ -500,7 +511,7 @@ def phase_plot(df,height,width,ind_l, ind_h):
     ax.plot(df.time,2*np.pi-df['phase_sinfit'], color = 'orange')
 
 
-def plot_time_series(neural_df, behav_df):
+def plot_time_series(neural_df, behav_df,example_path_results,trial_num):
     neural_columns = len(neural_df.columns.drop('time'))
     behav_columns = len(['fwV', 'yawV', 'sideV', 'heading'])
     total_plots = neural_columns + behav_columns
@@ -541,10 +552,10 @@ def plot_time_series(neural_df, behav_df):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/for_alex/"
-example_path_data = base_path+"20240123-2_SA123_gcamp7f_dur5s_isi25s/analysis/data/"
-example_path_results = base_path+"20240123-2_SA123_gcamp7f_dur5s_isi25s/analysis/results/"
-trial_num = 1
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/"
+#example_path_data = base_path+"20220824-3_FR1_GCAMP7f_short/data/"
+#example_path_results = base_path+"20220824-3_FR1_GCAMP7f_short/results/"
+#trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
 #is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
@@ -555,12 +566,12 @@ def main(example_path_data, example_path_results,trial_num):
     behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
     xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
     plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results,trial_num)
-    roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
+    roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
     dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
     if len(dff_all_rois) < len(hdeltab_index):
         print("raw df/f matrix dimension doesn't align with ROI names")
         return
-    neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
+    neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
     combined_df = combine_df(behav_df, neural_df)
     nonpara_summ_df = calc_nonpara(combined_df)
     behavior_var = 'translationalV'
@@ -570,9 +581,9 @@ def main(example_path_data, example_path_results,trial_num):
         paramfit_df = fit_sinusoid(neural_df, roi_mtx)
         plot_with_error_shading(paramfit_df, example_path_results, trial_num)
     else:
-        plot_time_series(neural_df, behav_df)
+        plot_time_series(neural_df, behav_df,example_path_results,trial_num)
 
-main(example_path_data, example_path_results,trial_num)
+#main(example_path_data, example_path_results,trial_num)
 
 def loop_trial(example_path_data, example_path_results):
     qualified_trials = find_complete_trials(example_path_data)
@@ -599,20 +610,21 @@ def loop_folder(base_path):
             # Construct pathnames for the 'data' and 'results' subfolders
             example_path_data = folder_path + '/data/'
             example_path_results = folder_path + '/results/'
+            if os.path.exists(example_path_data) and os.path.exists(example_path_results):
             # Check if the results folder is empty
-            if os.path.exists(example_path_results) and os.listdir(example_path_results):
-                print(f"Results folder is not empty, skipping: {example_path_results}")
-                continue  # Skip to the next folder
+                if os.path.exists(example_path_results) and os.listdir(example_path_results):
+                    print(f"Results folder is not empty, skipping: {example_path_results}")
+                    continue  # Skip to the next folder
 
-            # Print or process the constructed pathnames
-            print(f"Data Path: {example_path_data}")
-            print(f"Results Path: {example_path_results}")
-            loop_trial(example_path_data, example_path_results)
+                # Print or process the constructed pathnames
+                print(f"Data Path: {example_path_data}")
+                print(f"Results Path: {example_path_results}")
+                loop_trial(example_path_data, example_path_results)
 
             # Here, you can add any additional processing you need for these paths
 
     
-#loop_folder(base_path)
+loop_folder(base_path)
 #main(example_path_data, example_path_results)
 
 
