@@ -18,6 +18,8 @@ from scipy.ndimage import gaussian_filter1d
 import glob
 import re
 import shutil
+from scipy.stats import circmean, circstd
+from scipy.stats import sem
 
 def is_notebook():
     try:
@@ -331,14 +333,18 @@ def apply_gaussian_smoothing(series, sigma):
     
     return smoothed_series
 
-def calc_nonpara(combined_df):
+def calc_nonpara(combined_df, roi_kw,roi_kw2):
     combined_df = combined_df[(combined_df["fwV"]>0.2) | (combined_df["fwV"]<-0.2)]
     sigma = 5
     smooth_fwV = apply_gaussian_smoothing(combined_df.fwV, sigma)
     smooth_sideV = apply_gaussian_smoothing(combined_df.sideV, sigma)
     translational_speed = np.sqrt(smooth_fwV**2+smooth_sideV**2)
     forward_speed = np.abs(smooth_fwV)
-    neural_df_rois = combined_df[[col for col in combined_df.columns if 'hDeltaB' in col]]
+    if roi_kw2:
+        filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 not in col]
+        neural_df_rois = combined_df[filtered_columns]
+    else:
+        neural_df_rois = combined_df[[col for col in combined_df.columns if roi_kw.lower() in col.lower()]]
     
     row_means = neural_df_rois.apply(np.mean, axis=1)
     
@@ -348,28 +354,32 @@ def calc_nonpara(combined_df):
     # Combine mean and IQR into a new DataFrame
     stats_df = pd.DataFrame({'Mean': row_means, 'IQR': row_iqrs, 'translationalV': translational_speed, 'fwV':forward_speed})
     
-    return stats_df
+    return combined_df, stats_df
 
 #nonpara_summ_df = calc_nonpara(combined_df)
 #print(nonpara_summ_df)
 
-def nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results, trial_num):
+def nonpara_plot_bybehav(nonpara_summ_df, combined_df, behavior_var, example_path_results, trial_num):
     plt.figure(figsize=(6, 6))
-    plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= nonpara_summ_df[behavior_var])
+    plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= combined_df[behavior_var])
     plt.colorbar()
     plt.xlabel('mean')
     plt.ylabel('iqr')
     plt.title('mean vs. amplitude')
 
     # Save the plot
-    plt.savefig(example_path_results+'mean_amp_' + str(trial_num) +'.png')
+    plt.savefig(example_path_results+'mean_amp_' + behavior_var + str(trial_num) +'.png')
     plt.close()  # Close the plot explicitly after saving to free resources
 
 #behavior_var = 'translationalV'
 #nonpara_plot_bybehav(nonpara_summ_df, behavior_var)
 
-def extract_heatmap(df, roi_kw, do_normalize, example_path_results, trial_num):
-    roi_mtx = df[[col for col in df.columns if roi_kw.lower() in col.lower()]]
+def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num):
+    if roi_kw2:
+        filtered_columns = [col for col in df.columns if roi_kw in col and roi_kw2 not in col]
+        roi_mtx = df[filtered_columns]
+    else:
+        roi_mtx = df[[col for col in df.columns if roi_kw.lower() in col.lower()]]
     if roi_mtx.empty:
         return None
     if do_normalize:
@@ -378,6 +388,11 @@ def extract_heatmap(df, roi_kw, do_normalize, example_path_results, trial_num):
         plt.figure(figsize=(10, 6))
         sns.heatmap(np.transpose(roi_mtx))
         plt.savefig(example_path_results+'heatmap_norm' + str(trial_num)+ '.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
+    elif not do_normalize:
+        plt.figure(figsize=(10, 6))
+        sns.heatmap(np.transpose(roi_mtx))
+        plt.savefig(example_path_results+'heatmap_nonnorm' + str(trial_num)+ '.png')
         plt.close()  # Close the plot explicitly after saving to free resources
     return roi_mtx
 
@@ -549,12 +564,152 @@ def plot_time_series(neural_df, behav_df,example_path_results,trial_num):
     plt.savefig(example_path_results+'time_series_plotting' + str(trial_num) +'.png')
     plt.close()  # Close the plot explicitly after saving to free resources
 
+#########################################################################
+# tuning curves 
+
+# Creating a circular histogram
+def calc_circu_stats(circu_var,num_bins,example_path_results,trial_num):
+    fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
+    # Histogram with 30 bins
+    n, bins, patches = ax.hist(circu_var, bins=num_bins, density=True)
+
+    # Set the circumference labels
+    ax.set_xticks(np.linspace(0, 2 * np.pi, 8, endpoint=False))
+    ax.set_xticklabels(['0', '$\pi/4$', '$\pi/2$', '$3\pi/4$', '$\pi$', '$5\pi/4$', '$3\pi/2$', '$7\pi/4$'])
+
+    # Display the plot
+    plt.savefig(example_path_results+ circu_var.name + str(trial_num) +'.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
+
+    # Circular mean using scipy.stats.circmean for accuracy
+    mean_angle = circmean(circu_var, high=2*np.pi)
+
+    # Circular median: Sort the angles and find the middle value
+    sorted_angles = np.sort(circu_var)
+    median_angle = np.pi if len(sorted_angles) % 2 == 0 else sorted_angles[len(sorted_angles) // 2]
+
+    # Circular mode: Use histogram bins, find the bin with the highest frequency
+    n, bins = np.histogram(circu_var, bins=num_bins, range=(0, 2*np.pi))
+    max_bin_index = np.argmax(n)
+    mode_angle = (bins[max_bin_index] + bins[max_bin_index + 1]) / 2
+
+    return mean_angle, median_angle, mode_angle
+#mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading,30)
+def plot_scatter(behavior_variable, neural_activity, neurons_to_plot, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    for j in neurons_to_plot:
+        #print(len(behavior_variable))
+        ax.scatter(behavior_variable,neural_activity[j,:])
+    ax.set_xlabel(behavior_variable.name)
+    ax.set_ylabel('Average Neural Activity')
+    #ax[j,i].legend()
+    ax.set_title('Neural Activity Tuning Curves with SEM')
+    #plt.tight_layout()
+
+def tuning_curve_1d(behavior_variable, neural_activity, neurons_to_plot, num_bins, ax=None):
+    """
+    Plot tuning curves on the given matplotlib Axes.
+
+    Parameters:
+    - behavior_variable: array-like, the behavioral variable to bin.
+    - neural_activity: 2D array-like, neural activity data with shape (neurons, observations).
+    - neurons_to_plot: list of int, indices of neurons to plot.
+    - num_bins: int, number of bins to divide the behavior variable into.
+    - ax: matplotlib.axes.Axes, the axes object to plot on. If None, a new figure is created.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Bin the behavioral variable
+    bins = np.linspace(np.min(behavior_variable), np.max(behavior_variable), num_bins+1)
+    bin_centers = 0.5 * (bins[1:] + bins[:-1])
+
+    # Plot tuning curves with SEM for selected neurons
+    for neuron_index in neurons_to_plot:
+        binned_activity = np.empty(num_bins)
+        binned_sem = np.empty(num_bins)
+        
+        for i in range(num_bins):
+            indices = np.where((behavior_variable >= bins[i]) & (behavior_variable < bins[i+1]))[0]
+            bin_data = neural_activity[neuron_index, indices]
+            binned_activity[i] = np.mean(bin_data)
+            binned_sem[i] = sem(bin_data)
+
+        ax.plot(bin_centers, binned_activity, label=f'Neuron {neuron_index}')
+        ax.fill_between(bin_centers, binned_activity - binned_sem, binned_activity + binned_sem, alpha=0.3)
+
+    # Setting labels and title
+    ax.set_xlabel(behavior_variable.name)
+    ax.set_ylabel('Average Neural Activity')
+    ax.legend()
+    ax.set_title('Neural Activity Tuning Curves with SEM')
+    #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
+    #plt.close()  # Close the plot explicitly after saving to free resources
+
+# Example usage:
+# fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(20, 6))
+# for i, ax in enumerate(axs):
+#     tuning_curve_1d(behavior_variable, neural_activity, [i], 10, ax=ax)
+# plt.show()
+
+
+
+def filter_based_on_histogram(behavior_variable, min_freq_threshold):
+    """
+    Filters the behavioral variable data to remove points distant from the main mode,
+    isolated by at least two consecutive bins with very low frequency. Automatically adjusts
+    bins based on the Freedman-Diaconis rule.
+    
+    Parameters:
+    - behavior_variable: Pandas Series, the behavioral variable data.
+    - min_freq_threshold: The minimum frequency (as a proportion of total) to consider a bin as non-negligible.
+    
+    Returns:
+    - Pandas Series, filtered behavioral variable data.
+    """
+    # Calculate bin width using the Freedman-Diaconis rule
+    #IQR = np.subtract(*np.percentile(behavior_variable, [75, 25]))
+    #n = len(behavior_variable)
+    bin_width = 1
+    range_ = np.max(behavior_variable) - np.min(behavior_variable)
+    bins = int(np.round(range_ / bin_width))
+    print(bins)
+    # Compute the histogram with the calculated number of bins
+    counts, bin_edges = np.histogram(behavior_variable, bins=bins)
+    #total_points = n
+    #freqs = counts / total_points  # Frequency of each bin
+    
+    # Identify bins below the frequency threshold
+    low_freq_bins_mask = counts < min_freq_threshold
+    
+    # Find indices where two consecutive bins are below the threshold
+    two_consecutive_low_bins = np.where(np.convolve(low_freq_bins_mask, [1,1], mode='valid') == 2)[0]
+    
+    if two_consecutive_low_bins.size == 0:
+        return behavior_variable  # No such consecutive low bins, return original series
+    
+    # Determine cutoffs
+    mode_bin_index = np.argmax(counts)
+    lower_cutoff_bins = two_consecutive_low_bins[two_consecutive_low_bins < mode_bin_index]
+    upper_cutoff_bins = two_consecutive_low_bins[two_consecutive_low_bins > mode_bin_index]
+    lower_cutoff = bin_edges[0] if lower_cutoff_bins.size == 0 else bin_edges[lower_cutoff_bins.max() + 2]  # +2 to include the low bin
+    upper_cutoff = bin_edges[-1] if upper_cutoff_bins.size == 0 else bin_edges[upper_cutoff_bins.min()]
+    
+    # Filter the behavioral variable
+    filtered_variable = behavior_variable[(behavior_variable >= lower_cutoff) & (behavior_variable <= upper_cutoff)]
+    
+    return filtered_variable
+# Example usage:
+#tuning_curve_1d(behavior_variable, neural_activity,neurons_to_plot,num_bins)
+
+
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/"
-#example_path_data = base_path+"20220824-3_FR1_GCAMP7f_short/data/"
-#example_path_results = base_path+"20220824-3_FR1_GCAMP7f_short/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/bar_jump/"
+#example_path_data = base_path+"20220616-3_MB441B_GCAMP7f_long/data/"
+#example_path_results = base_path+"20220616-3_MB441B_GCAMP7f_long/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -571,19 +726,85 @@ def main(example_path_data, example_path_results,trial_num):
     if len(dff_all_rois) < len(hdeltab_index):
         print("raw df/f matrix dimension doesn't align with ROI names")
         return
+    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/":
+        dff_all_rois = dff_all_rois[[0,2,3],:]
     neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
     combined_df = combine_df(behav_df, neural_df)
-    nonpara_summ_df = calc_nonpara(combined_df)
-    behavior_var = 'translationalV'
-    nonpara_plot_bybehav(nonpara_summ_df, behavior_var, example_path_results,trial_num)
-    roi_mtx = extract_heatmap(combined_df, "hDeltaB", True, example_path_results, trial_num)
-    if not (roi_mtx is None):
+    behavior_var1 = 'translationalV'
+    behavior_var2 = 'heading'
+    roi_kw = 'hDeltaB'
+    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/":
+        roi_kw = 'hDeltaB'
+    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/20220720-3_hDeltaB_GCAMP7f_long/data/":
+        roi_kw = 'hDealtaB'
+    roi_kw2 = None
+    #roi_kw3 = 'CRE'
+    do_normalize = False
+    combined_df_trun, nonpara_summ_df = calc_nonpara(combined_df,roi_kw,roi_kw2)
+    nonpara_plot_bybehav(nonpara_summ_df, nonpara_summ_df, behavior_var1, example_path_results,trial_num)
+    nonpara_plot_bybehav(nonpara_summ_df, combined_df_trun, behavior_var2, example_path_results,trial_num)
+    roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
+    if not (roi_mtx is None) and do_normalize:
         paramfit_df = fit_sinusoid(neural_df, roi_mtx)
         plot_with_error_shading(paramfit_df, example_path_results, trial_num)
     else:
         plot_time_series(neural_df, behav_df,example_path_results,trial_num)
+    mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading,30,example_path_results,trial_num)
+    behavioral_variables = [behav_df.fwV, behav_df.sideV, behav_df.yawV, behav_df.heading]
+    filtered_behavior_variables = [filter_based_on_histogram(var, 0.5) for var in behavioral_variables]
+    #filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw3 in col]
+    filtered_columns = [col for col in combined_df.columns if roi_kw in col]
+    #neural_df_rois = combined_df[filtered_columns]
+    #fit_params = paramfit_df[['phase','amplitude','baseline']].T
+    #neural_activity = np.array(np.concatenate((neural_df[filtered_columns].T,fit_params),axis=0))
+    neural_activity = np.array(neural_df[filtered_columns].T)
+    num_bins = 10
+    neurons_to_plot = range(neural_activity.shape[0])
+    num_behavioral_variables = len(filtered_behavior_variables)
+    #fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
+    if neural_activity.shape[0]>1:
+        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
+        for j in neurons_to_plot:
+            for i, behavior_variable in enumerate(filtered_behavior_variables):
+                tuning_curve_1d(behavior_variable, neural_activity,[j],num_bins,ax=ax[j,i])
+                if i == 3:
+                    ax[j,i].axvline(mean_angle, color = 'red', label = 'mean heading')
+                    ax[j,i].axvline(mode_angle, linestyle = '--',color = 'red', label = 'mode heading')
+                    ax[j,i].legend()
+        plt.tight_layout()
+        #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'1d_tuning_curve_pop_' + str(trial_num) +'.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
+        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
+        for j in neurons_to_plot:
+            for i, behavior_variable in enumerate(behavioral_variables):
+                plot_scatter(behavior_variable, neural_activity, [j], ax=ax[j,i])
+        plt.tight_layout()
+        #plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'scatterplot_pop_' + str(trial_num) +'.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
+    elif neural_activity.shape[0]==1:
+        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
+        for i, behavior_variable in enumerate(filtered_behavior_variables):
+            tuning_curve_1d(behavior_variable, neural_activity,[0],num_bins,ax=ax[i])
+            if i == 3:
+                ax[i].axvline(mean_angle, color = 'red', label = 'mean heading')
+                ax[i].axvline(mode_angle, linestyle = '--',color = 'red', label = 'mode heading')
+                ax[i].legend()
+        plt.tight_layout()
+        #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'1d_tuning_curve_pop_' + str(trial_num) +'.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
+        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
+        for i, behavior_variable in enumerate(behavioral_variables):
+            plot_scatter(behavior_variable, neural_activity, [0], ax=ax[i])
+        plt.tight_layout()
+        #plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'scatterplot_pop_' + str(trial_num) +'.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
 
-#main(example_path_data, example_path_results,trial_num)
+
+#main(example_path_data, example_path_results,1)
 
 def loop_trial(example_path_data, example_path_results):
     qualified_trials = find_complete_trials(example_path_data)
@@ -625,63 +846,5 @@ def loop_folder(base_path):
 
     
 loop_folder(base_path)
-#main(example_path_data, example_path_results)
+#main(example_path_data, example_path_results,2)
 
-
-##########################################################################
-# files transfer 
-
-def move_folders_with_empty_results(pathname):
-    # Create the 'no_results' directory if it doesn't exist
-    no_results_path = os.path.join(pathname, 'no_results')
-    if not os.path.exists(no_results_path):
-        os.makedirs(no_results_path)
-        print(f"Created directory: {no_results_path}")
-
-    # Loop through all items in pathname
-    for folder_name in os.listdir(pathname):
-        folder_path = os.path.join(pathname, folder_name)
-        
-        # Skip the 'no_results' folder itself
-        if folder_name == 'no_results' or folder_name == 'to_check':
-            continue
-        
-        # Check if the item is a directory
-        if os.path.isdir(folder_path):
-            # Construct the pathname for the 'results' subfolder
-            results_folder_path = os.path.join(folder_path, 'results')
-            
-            # Check if 'results' subfolder exists and is empty
-            if os.path.exists(results_folder_path) and not os.listdir(results_folder_path):
-                # Move the whole folder to 'no_results'
-                dest_path = os.path.join(no_results_path, folder_name)
-                shutil.move(folder_path, dest_path)
-                print(f"Moved {folder_path} to {dest_path}")
-
-
-
-#move_folders_with_empty_results(base_path)
-                
-def move_folders_containing_odor(pathname):
-    # Create the 'with_odor' directory if it doesn't exist
-    with_odor_path = os.path.join(pathname, 'with_odor')
-    if not os.path.exists(with_odor_path):
-        os.makedirs(with_odor_path)
-        print(f"Created directory: {with_odor_path}")
-
-    # Loop through all items in pathname
-    for folder_name in os.listdir(pathname):
-        folder_path = os.path.join(pathname, folder_name)
-        
-        # Skip the 'with_odor' folder itself
-        if folder_name.lower() == 'with_odor':
-            continue
-        
-        # Check if the item is a directory and its name contains 'odor'
-        if os.path.isdir(folder_path) and 'odor' in folder_name.lower():
-            # Move the folder to 'with_odor'
-            dest_path = os.path.join(with_odor_path, folder_name)
-            shutil.move(folder_path, dest_path)
-            print(f"Moved {folder_path} to {dest_path}")
-
-#move_folders_containing_odor(base_path)

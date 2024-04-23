@@ -191,4 +191,177 @@ def move_struct_files(pathname1):
                         shutil.move(source_file_path, destination_file_path)
 
 # Example usage
-move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging')
+move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/bar_jump')
+
+def move_odor_folders(pathname1):
+    # Define the path for the 'odor_trials' folder
+    odor_trials_path = os.path.join(pathname1, "odor_trials")
+    
+    # Check if 'odor_trials' folder exists, create if not
+    if not os.path.exists(odor_trials_path):
+        os.makedirs(odor_trials_path)
+    
+    # Loop through all items in pathname1
+    for item in os.listdir(pathname1):
+        item_path = os.path.join(pathname1, item)
+        
+        # Check if the item is a directory and its name contains 'odor'
+        if os.path.isdir(item_path) and 'odor' in item.lower():
+            # Define the destination path within 'odor_trials'
+            destination_path = os.path.join(odor_trials_path, item)
+            
+            # Move the folder
+            shutil.move(item_path, destination_path)
+            print(f"Moved '{item}' to '{odor_trials_path}'")
+
+# Example usage
+#move_odor_folders('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging')
+
+
+def process_folders(pathname1):
+    # Step 1: Create 'to_processed' folder if it doesn't exist
+    to_processed_path = os.path.join(pathname1, 'to_processed')
+    if not os.path.exists(to_processed_path):
+        os.makedirs(to_processed_path)
+    
+    # Step 2: Loop through folders under pathname1
+    for folder_name in os.listdir(pathname1):
+        folder_path = os.path.join(pathname1, folder_name)
+        
+        # Ensure it's a directory
+        if not os.path.isdir(folder_path):
+            continue
+        
+        data_path = os.path.join(folder_path, 'data')
+        intermediate_path = os.path.join(folder_path, 'intermediate analysis output')
+        
+        # Step 3: Check for 'data' subfolder
+        if os.path.exists(data_path):
+            continue  # Skip this folder
+        
+        # Step 4: Check for 'intermediate analysis output' subfolder
+        if os.path.exists(intermediate_path):
+            # Rename 'intermediate analysis output' to 'data'
+            new_data_path = os.path.join(folder_path, 'data')
+            os.rename(intermediate_path, new_data_path)
+            # Create 'results' subfolder
+            results_path = os.path.join(folder_path, 'results')
+            os.makedirs(results_path)
+        else:
+            # Step 5: If neither subfolder exists, move to 'to_processed'
+            shutil.move(folder_path, to_processed_path)
+
+# Example usage
+#process_folders('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging')
+
+
+def delete_matching_folders(pathname1, pathname2):
+    # Ensure pathname1 and pathname2 are directories
+    if not os.path.isdir(pathname1) or not os.path.isdir(pathname2):
+        print("One of the provided paths is not a directory.")
+        return
+
+    # Loop through folders under pathname1
+    for folder_name in os.listdir(pathname1):
+        folder_path1 = os.path.join(pathname1, folder_name)
+        
+        # Check if it's a directory
+        if os.path.isdir(folder_path1):
+            matching_folder_path2 = os.path.join(pathname2, folder_name)
+            
+            # If a matching folder exists under pathname2, delete it
+            if os.path.exists(matching_folder_path2) and os.path.isdir(matching_folder_path2):
+                try:
+                    shutil.rmtree(matching_folder_path2)
+                    print(f"Deleted folder: {matching_folder_path2}")
+                except Exception as e:
+                    print(f"Error deleting folder {matching_folder_path2}: {e}")
+
+# Example usage
+#delete_matching_folders('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/low_quality', 'F:/Wilson lab/hDeltaB_imaging')
+
+
+def move_and_organize_folders(pathname1, pathname2):
+    # Loop through each folder in pathname1
+    for folder_name in os.listdir(pathname1):
+        folder_path1 = os.path.join(pathname1, folder_name)
+        
+        # Ensure it's a directory
+        if os.path.isdir(folder_path1):
+            matching_folder_path2 = os.path.join(pathname2, folder_name)
+            
+            # Check if the matching folder exists under pathname2
+            if os.path.exists(matching_folder_path2) and os.path.isdir(matching_folder_path2):
+                # Create 'data' and 'results' subfolders in the matching pathname2 folder
+                data_path = os.path.join(matching_folder_path2, 'data')
+                results_path = os.path.join(matching_folder_path2, 'results')
+                os.makedirs(data_path, exist_ok=True)
+                os.makedirs(results_path, exist_ok=True)
+                
+                # Move all contents from the pathname1 folder to the 'data' folder in pathname2
+                for item in os.listdir(folder_path1):
+                    source_item_path = os.path.join(folder_path1, item)
+                    destination_item_path = os.path.join(data_path, item)
+                    shutil.move(source_item_path, destination_item_path)
+                
+                # Delete the original folder from pathname1
+                #shutil.rmtree(folder_path1)
+
+# Example usage
+#move_and_organize_folders('C:/Users/wilson/OneDrive - Harvard University/Thesis - Wilson lab/2P imaging/preprocessed data/qualified_sessions/multi_trial_sessions/no_results', '//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/low_quality')
+
+
+def move_folders_with_empty_results(pathname):
+    # Create the 'no_results' directory if it doesn't exist
+    no_results_path = os.path.join(pathname, 'no_results')
+    if not os.path.exists(no_results_path):
+        os.makedirs(no_results_path)
+        print(f"Created directory: {no_results_path}")
+
+    # Loop through all items in pathname
+    for folder_name in os.listdir(pathname):
+        folder_path = os.path.join(pathname, folder_name)
+        
+        # Skip the 'no_results' folder itself
+        if folder_name == 'no_results' or folder_name == 'to_check':
+            continue
+        
+        # Check if the item is a directory
+        if os.path.isdir(folder_path):
+            # Construct the pathname for the 'results' subfolder
+            results_folder_path = os.path.join(folder_path, 'results')
+            
+            # Check if 'results' subfolder exists and is empty
+            if os.path.exists(results_folder_path) and not os.listdir(results_folder_path):
+                # Move the whole folder to 'no_results'
+                dest_path = os.path.join(no_results_path, folder_name)
+                shutil.move(folder_path, dest_path)
+                print(f"Moved {folder_path} to {dest_path}")
+
+
+
+#move_folders_with_empty_results(base_path)
+                
+def move_folders_containing_odor(pathname):
+    # Create the 'with_odor' directory if it doesn't exist
+    with_odor_path = os.path.join(pathname, 'with_odor')
+    if not os.path.exists(with_odor_path):
+        os.makedirs(with_odor_path)
+        print(f"Created directory: {with_odor_path}")
+
+    # Loop through all items in pathname
+    for folder_name in os.listdir(pathname):
+        folder_path = os.path.join(pathname, folder_name)
+        
+        # Skip the 'with_odor' folder itself
+        if folder_name.lower() == 'with_odor':
+            continue
+        
+        # Check if the item is a directory and its name contains 'odor'
+        if os.path.isdir(folder_path) and 'odor' in folder_name.lower():
+            # Move the folder to 'with_odor'
+            dest_path = os.path.join(with_odor_path, folder_name)
+            shutil.move(folder_path, dest_path)
+            print(f"Moved {folder_path} to {dest_path}")
+
+#move_folders_containing_odor(base_path)
