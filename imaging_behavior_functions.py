@@ -20,6 +20,7 @@ import re
 import shutil
 from scipy.stats import circmean, circstd
 from scipy.stats import sem
+import json
 
 def is_notebook():
     try:
@@ -707,7 +708,7 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/bar_jump/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/no_odor/"
 #example_path_data = base_path+"20220616-3_MB441B_GCAMP7f_long/data/"
 #example_path_results = base_path+"20220616-3_MB441B_GCAMP7f_long/results/"
 #trial_num = 1
@@ -805,14 +806,100 @@ def main(example_path_data, example_path_results,trial_num):
 
 
 #main(example_path_data, example_path_results,1)
+def calc_peak_correlation_full(series1, series2, max_lag):
+    # Ensure series are zero-mean for meaningful correlation results
+    series1 = series1 - np.mean(series1)
+    series2 = series2 - np.mean(series2)
+    
+    # Calculate cross-correlation using 'full' mode
+    cross_corr = np.correlate(series1, series2, mode='full')
+    
+    # Cross-correlation results include negative to positive lags; find the index of the zero lag
+    zero_lag_index = len(series1) - 1
+    
+    # Focus on lags from -max_lag to +max_lag
+    start_index = zero_lag_index - max_lag
+    end_index = zero_lag_index + max_lag + 1
+    valid_corrs = cross_corr[start_index:end_index]
+    
+    # Normalize correlation coefficients
+    normalization = np.sqrt(np.sum(series1**2) * np.sum(series2**2))
+    valid_corrs = valid_corrs / normalization
+    
+    # Get index of maximum correlation from the valid correlations
+    max_index = np.argmax(valid_corrs)
+    peak_lag = max_index - max_lag  # Adjust index to account for negative lags
+    peak_correlation = valid_corrs[max_index]
+    
+    return peak_correlation, peak_lag
 
-def loop_trial(example_path_data, example_path_results):
+# https://jdblischak.github.io/fucci-seq/circ-simulation-correlation.html
+def calc_circular_correlation(circular_series, series2):
+    circular_series_cos = np.cos(circular_series)
+    circular_series_sin = np.sin(circular_series)
+    correlation_cos = series2.corr(pd.Series(circular_series_cos))
+    correlation_sin = series2.corr(pd.Series(circular_series_sin))
+    correlation_cs = pd.Series(circular_series_cos).corr(pd.Series(circular_series_sin))
+    numerator = correlation_cos**2 + correlation_sin**2-2*correlation_cos*correlation_sin*correlation_cs
+    denominator = 1- correlation_cs**2
+    combined_correlation = np.sqrt(numerator/denominator)
+    return combined_correlation
+
+
+def calc_correlation_batch(example_path_data, example_path_results,trial_num,corr_dict):
+    is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
+    behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
+    xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
+    #plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results,trial_num)
+    roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
+    dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
+    if len(dff_all_rois) < len(hdeltab_index):
+        print("raw df/f matrix dimension doesn't align with ROI names")
+        return
+    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/":
+        dff_all_rois = dff_all_rois[[0,2,3],:]
+    neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
+    combined_df = combine_df(behav_df, neural_df)
+    roi_kw = 'hDeltaB'
+    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/":
+        roi_kw = 'hDeltaB'
+    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/20220720-3_hDeltaB_GCAMP7f_long/data/":
+        roi_kw = 'hDealtaB'
+    roi_kw2 = None
+    do_normalize = True
+    roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
+    if not (roi_mtx is None) and do_normalize:
+        paramfit_df = fit_sinusoid(neural_df, roi_mtx)
+        plot_with_error_shading(paramfit_df, example_path_results, trial_num)
+    else:
+        plot_time_series(neural_df, behav_df,example_path_results,trial_num)
+    columns_to_loop = ['fwV', 'abssideV', 'absyawV', 'heading']
+    for col in columns_to_loop:
+        # First series from behav_df
+        series1 = behav_df[col]
+        
+        # Filter neural_df for columns containing 'MBON21', average them to get the second series
+        series2 = paramfit_df.filter(regex='baseline').mean(axis=1)
+        
+        # Calculate peak correlation with a max lag of 5
+        corr, lag_with_peak_corr = calc_peak_correlation_full(series1, series2, 5)
+
+        #print(f"Peak Correlation for {col}: {peak_corr}, Lag: {lag_with_peak_corr}")
+        
+        # Additional circular correlation calculation for 'heading'
+        if col == 'heading':
+            corr = calc_circular_correlation(series1, series2)
+            #print(f"Circular Correlation for {col}: {circular_corr}")
+        corr_dict[col].append(corr)
+
+def loop_trial(example_path_data, example_path_results,corr_dict = None):
     qualified_trials = find_complete_trials(example_path_data)
     if qualified_trials == []:
         return
     print(f"qualified trial numbers are {qualified_trials}")
     for trial_num in qualified_trials:
-        main(example_path_data, example_path_results,trial_num)
+        #main(example_path_data, example_path_results,trial_num)
+        calc_correlation_batch(example_path_data, example_path_results,trial_num, corr_dict)
 
 #loop_trial(example_path_data, example_path_results)
 
@@ -821,7 +908,11 @@ def loop_folder(base_path):
     if not os.path.isdir(base_path):
         print(f"{base_path} is not a directory.")
         return
-
+    corr_dict = {}
+    corr_dict['fwV'] = []
+    corr_dict['abssideV'] = []
+    corr_dict['absyawV'] = []
+    corr_dict['heading'] = []
     # Loop through all items in base_path
     for folder_name in os.listdir(base_path):
         folder_path = os.path.join(base_path, folder_name)
@@ -833,18 +924,18 @@ def loop_folder(base_path):
             example_path_results = folder_path + '/results/'
             if os.path.exists(example_path_data) and os.path.exists(example_path_results):
             # Check if the results folder is empty
-                if os.path.exists(example_path_results) and os.listdir(example_path_results):
-                    print(f"Results folder is not empty, skipping: {example_path_results}")
-                    continue  # Skip to the next folder
+                #if os.path.exists(example_path_results) and os.listdir(example_path_results):
+                    #print(f"Results folder is not empty, skipping: {example_path_results}")
+                    #continue  # Skip to the next folder
 
                 # Print or process the constructed pathnames
                 print(f"Data Path: {example_path_data}")
                 print(f"Results Path: {example_path_results}")
-                loop_trial(example_path_data, example_path_results)
-
-            # Here, you can add any additional processing you need for these paths
-
+                loop_trial(example_path_data, example_path_results,corr_dict)
+    file_path = base_path+'summary_stats.json'
+    with open(file_path, 'w') as file:
+        json.dump(corr_dict, file)
     
-loop_folder(base_path)
+#loop_folder(base_path)
 #main(example_path_data, example_path_results,2)
 
