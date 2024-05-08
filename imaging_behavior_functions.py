@@ -334,23 +334,27 @@ def apply_gaussian_smoothing(series, sigma):
     
     return smoothed_series
 
-def calc_nonpara(combined_df, roi_kw,roi_kw2):
-    combined_df = combined_df[(combined_df["fwV"]>0.2) | (combined_df["fwV"]<-0.2)]
+
+def calc_nonpara(combined_df, roi_kw,roi_kw2, roi_mtx=None, do_truncate=False):
+    if do_truncate:
+        combined_df = combined_df[(combined_df["fwV"]>0.2) | (combined_df["fwV"]<-0.2)]
     sigma = 5
     smooth_fwV = apply_gaussian_smoothing(combined_df.fwV, sigma)
     smooth_sideV = apply_gaussian_smoothing(combined_df.sideV, sigma)
     translational_speed = np.sqrt(smooth_fwV**2+smooth_sideV**2)
     forward_speed = np.abs(smooth_fwV)
-    if roi_kw2:
-        filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 not in col]
-        neural_df_rois = combined_df[filtered_columns]
+    if roi_mtx is None:
+        if roi_kw2:
+            filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 not in col]
+            neural_df_rois = combined_df[filtered_columns]
+        else:
+            neural_df_rois = combined_df[[col for col in combined_df.columns if roi_kw.lower() in col.lower()]]
+        row_means = neural_df_rois.apply(np.mean, axis=1)
+    
+        row_iqrs = neural_df_rois.apply(lambda x: iqr(x, interpolation='midpoint'), axis=1)
     else:
-        neural_df_rois = combined_df[[col for col in combined_df.columns if roi_kw.lower() in col.lower()]]
-    
-    row_means = neural_df_rois.apply(np.mean, axis=1)
-    
-    # Calculate IQR for each row
-    row_iqrs = neural_df_rois.apply(lambda x: iqr(x, interpolation='midpoint'), axis=1)
+        row_means = np.mean(roi_mtx, axis=1)
+        row_iqrs = iqr(roi_mtx,interpolation='midpoint',axis=1)
     
     # Combine mean and IQR into a new DataFrame
     stats_df = pd.DataFrame({'Mean': row_means, 'IQR': row_iqrs, 'translationalV': translational_speed, 'fwV':forward_speed})
@@ -399,7 +403,26 @@ def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, tri
 
 #roi_mtx = extract_heatmap(combined_df, "hDeltaB", True)
 
-
+# for EPG type imaging only 
+def calculate_pva(activity_matrix):
+    num_neurons, time_steps = activity_matrix.shape
+    directions = np.linspace(0, 2*np.pi, num_neurons//2, endpoint=False)
+    
+    # Repeat directions for both halves of the neuron population
+    directions = np.tile(directions, 2)
+    
+    # Calculate vector components for each neuron's activity
+    x_components = np.cos(directions)[:, np.newaxis] * activity_matrix
+    y_components = np.sin(directions)[:, np.newaxis] * activity_matrix
+    
+    # Sum components across neurons for each time step
+    sum_x = np.sum(x_components, axis=0)
+    sum_y = np.sum(y_components, axis=0)
+    
+    # Calculate PVA for each time step
+    pva_phase = np.arctan2(sum_y, sum_x)  # Phase in radians
+    pva_amplitude = np.sqrt(sum_x**2 + sum_y**2)  # Magnitude of the vector
+    return pva_phase, pva_amplitude
 
 def fit_sinusoid(neural_df, roi_mtx):
     def test_func(x, dist, amp, phi):
@@ -708,7 +731,7 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/no_odor/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging/"
 #example_path_data = base_path+"20220616-3_MB441B_GCAMP7f_long/data/"
 #example_path_results = base_path+"20220616-3_MB441B_GCAMP7f_long/results/"
 #trial_num = 1
@@ -733,18 +756,18 @@ def main(example_path_data, example_path_results,trial_num):
     combined_df = combine_df(behav_df, neural_df)
     behavior_var1 = 'translationalV'
     behavior_var2 = 'heading'
-    roi_kw = 'hDeltaB'
+    roi_kw = 'FB4R'
     if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/":
         roi_kw = 'hDeltaB'
     if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/20220720-3_hDeltaB_GCAMP7f_long/data/":
         roi_kw = 'hDealtaB'
-    roi_kw2 = None
-    #roi_kw3 = 'CRE'
-    do_normalize = False
-    combined_df_trun, nonpara_summ_df = calc_nonpara(combined_df,roi_kw,roi_kw2)
+    roi_kw2 = 'FB'
+    roi_kw3 = 'CRE'
+    do_normalize = True
+    roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
+    combined_df_trun, nonpara_summ_df = calc_nonpara(combined_df,roi_kw,roi_kw2,roi_mtx,False)
     nonpara_plot_bybehav(nonpara_summ_df, nonpara_summ_df, behavior_var1, example_path_results,trial_num)
     nonpara_plot_bybehav(nonpara_summ_df, combined_df_trun, behavior_var2, example_path_results,trial_num)
-    roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
     if not (roi_mtx is None) and do_normalize:
         paramfit_df = fit_sinusoid(neural_df, roi_mtx)
         plot_with_error_shading(paramfit_df, example_path_results, trial_num)
@@ -753,12 +776,14 @@ def main(example_path_data, example_path_results,trial_num):
     mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading,30,example_path_results,trial_num)
     behavioral_variables = [behav_df.fwV, behav_df.sideV, behav_df.yawV, behav_df.heading]
     filtered_behavior_variables = [filter_based_on_histogram(var, 0.5) for var in behavioral_variables]
-    #filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw3 in col]
-    filtered_columns = [col for col in combined_df.columns if roi_kw in col]
+    filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw3 in col]
+    fb_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 in col]
+    neural_df['fb_mean'] = neural_df[fb_columns].mean(axis=1)
+    #filtered_columns = [col for col in combined_df.columns if roi_kw in col]
     #neural_df_rois = combined_df[filtered_columns]
-    #fit_params = paramfit_df[['phase','amplitude','baseline']].T
-    #neural_activity = np.array(np.concatenate((neural_df[filtered_columns].T,fit_params),axis=0))
-    neural_activity = np.array(neural_df[filtered_columns].T)
+    #fit_params = nonpara_summ_df[['Mean','IQR']].T
+    neural_activity = np.array(np.concatenate((neural_df[filtered_columns].T,neural_df[['fb_mean']].T),axis=0))
+    #neural_activity = np.array(neural_df[filtered_columns].T)
     num_bins = 10
     neurons_to_plot = range(neural_activity.shape[0])
     num_behavioral_variables = len(filtered_behavior_variables)
@@ -774,7 +799,7 @@ def main(example_path_data, example_path_results,trial_num):
                     ax[j,i].legend()
         plt.tight_layout()
         #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'1d_tuning_curve_pop_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
         plt.close()  # Close the plot explicitly after saving to free resources
         fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
         for j in neurons_to_plot:
@@ -782,7 +807,7 @@ def main(example_path_data, example_path_results,trial_num):
                 plot_scatter(behavior_variable, neural_activity, [j], ax=ax[j,i])
         plt.tight_layout()
         #plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'scatterplot_pop_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
         plt.close()  # Close the plot explicitly after saving to free resources
     elif neural_activity.shape[0]==1:
         fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
@@ -794,14 +819,14 @@ def main(example_path_data, example_path_results,trial_num):
                 ax[i].legend()
         plt.tight_layout()
         #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'1d_tuning_curve_pop_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
         plt.close()  # Close the plot explicitly after saving to free resources
         fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
         for i, behavior_variable in enumerate(behavioral_variables):
             plot_scatter(behavior_variable, neural_activity, [0], ax=ax[i])
         plt.tight_layout()
         #plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'scatterplot_pop_' + str(trial_num) +'.png')
+        plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
         plt.close()  # Close the plot explicitly after saving to free resources
 
 
@@ -859,6 +884,9 @@ def calc_correlation_batch(example_path_data, example_path_results,trial_num,cor
     if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/":
         dff_all_rois = dff_all_rois[[0,2,3],:]
     neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
+    if not any('MBON09' in col for col in neural_df.columns):
+        print('no MBON09 columns')
+        return
     combined_df = combine_df(behav_df, neural_df)
     roi_kw = 'hDeltaB'
     if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/":
@@ -873,13 +901,13 @@ def calc_correlation_batch(example_path_data, example_path_results,trial_num,cor
         plot_with_error_shading(paramfit_df, example_path_results, trial_num)
     else:
         plot_time_series(neural_df, behav_df,example_path_results,trial_num)
-    columns_to_loop = ['fwV', 'abssideV', 'absyawV', 'heading']
+    columns_to_loop = ['phase','amplitude', 'baseline']
     for col in columns_to_loop:
         # First series from behav_df
-        series1 = behav_df[col]
+        series1 = paramfit_df[col]
         
         # Filter neural_df for columns containing 'MBON21', average them to get the second series
-        series2 = paramfit_df.filter(regex='baseline').mean(axis=1)
+        series2 = neural_df.filter(regex='MBON09').mean(axis=1)
         
         # Calculate peak correlation with a max lag of 5
         corr, lag_with_peak_corr = calc_peak_correlation_full(series1, series2, 5)
@@ -887,19 +915,46 @@ def calc_correlation_batch(example_path_data, example_path_results,trial_num,cor
         #print(f"Peak Correlation for {col}: {peak_corr}, Lag: {lag_with_peak_corr}")
         
         # Additional circular correlation calculation for 'heading'
-        if col == 'heading':
+        if col == 'phase':
             corr = calc_circular_correlation(series1, series2)
             #print(f"Circular Correlation for {col}: {circular_corr}")
         corr_dict[col].append(corr)
 
-def loop_trial(example_path_data, example_path_results,corr_dict = None):
+def save_dfs(example_path_data, example_path_results,trial_num,hdf5_file_path,folder_name):
+    #folder_key = example_path_data + '../'
+    hdf_key = f"{folder_name}_trial{trial_num}"
+    is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
+    behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
+    xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
+    #plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results,trial_num)
+    roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
+    dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
+    if len(dff_all_rois) < len(hdeltab_index):
+        print("raw df/f matrix dimension doesn't align with ROI names")
+        return
+    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/":
+        dff_all_rois = dff_all_rois[[0,2,3],:]
+    neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
+    combined_df = combine_df(behav_df, neural_df)
+    roi_kw = 'hDeltaB'
+    roi_kw2 = None
+    do_normalize = True
+    roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
+    if not (roi_mtx is None) and do_normalize:
+        paramfit_df = fit_sinusoid(neural_df, roi_mtx)
+    combined_df = combine_df(combined_df, paramfit_df)
+    combined_df.to_hdf(hdf5_file_path, key=hdf_key, mode='a')
+        
+
+def loop_trial(example_path_data, example_path_results,corr_dict = None,hdf5_file_path=None, folder_name=None):
     qualified_trials = find_complete_trials(example_path_data)
     if qualified_trials == []:
         return
     print(f"qualified trial numbers are {qualified_trials}")
     for trial_num in qualified_trials:
-        #main(example_path_data, example_path_results,trial_num)
-        calc_correlation_batch(example_path_data, example_path_results,trial_num, corr_dict)
+        #save_dfs(example_path_data, example_path_results,trial_num,hdf5_file_path,folder_name)
+        main(example_path_data, example_path_results,trial_num)
+        #calc_correlation_batch(example_path_data, example_path_results,trial_num, corr_dict)
 
 #loop_trial(example_path_data, example_path_results)
 
@@ -908,11 +963,12 @@ def loop_folder(base_path):
     if not os.path.isdir(base_path):
         print(f"{base_path} is not a directory.")
         return
+    hdf5_file_path = base_path + 'pds_all_flies.h5'
     corr_dict = {}
-    corr_dict['fwV'] = []
-    corr_dict['abssideV'] = []
-    corr_dict['absyawV'] = []
-    corr_dict['heading'] = []
+    corr_dict['phase'] = []
+    corr_dict['amplitude'] = []
+    corr_dict['baseline'] = []
+    #corr_dict['heading'] = []
     # Loop through all items in base_path
     for folder_name in os.listdir(base_path):
         folder_path = os.path.join(base_path, folder_name)
@@ -931,7 +987,7 @@ def loop_folder(base_path):
                 # Print or process the constructed pathnames
                 print(f"Data Path: {example_path_data}")
                 print(f"Results Path: {example_path_results}")
-                loop_trial(example_path_data, example_path_results,corr_dict)
+                loop_trial(example_path_data, example_path_results,corr_dict,hdf5_file_path,folder_name)
     file_path = base_path+'summary_stats.json'
     with open(file_path, 'w') as file:
         json.dump(corr_dict, file)

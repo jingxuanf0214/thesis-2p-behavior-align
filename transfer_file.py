@@ -191,7 +191,7 @@ def move_struct_files(pathname1):
                         shutil.move(source_file_path, destination_file_path)
 
 # Example usage
-move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/no_odor')
+move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging')
 
 def move_odor_folders(pathname1):
     # Define the path for the 'odor_trials' folder
