@@ -235,7 +235,7 @@ def get_roi_seq(roi_df):
     # Filter the DataFrame to only include rows with that trial number
     roi_df = roi_df[roi_df['trialNum'] == trial_num_max_rows].reset_index(drop=True)
     roi_names = roi_df['roiName'].apply(lambda x: x[0])
-    roi_hdeltab = roi_names[roi_names.str.contains('hDeltaB')]
+    roi_hdeltab = roi_names[roi_names.str.contains('hDeltaB',case=False)]
     hdeltab_index = roi_hdeltab.index
     roi_epg = roi_names[roi_names.str.contains('EPG')]
     epg_index = roi_epg.index
@@ -731,9 +731,9 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging/"
-#example_path_data = base_path+"20220616-3_MB441B_GCAMP7f_long/data/"
-#example_path_results = base_path+"20220616-3_MB441B_GCAMP7f_long/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/odor_trials/to_check/"
+example_path_data = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/data/"
+example_path_results = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -993,5 +993,5 @@ def loop_folder(base_path):
         json.dump(corr_dict, file)
     
 #loop_folder(base_path)
-#main(example_path_data, example_path_results,2)
+#main(example_path_data, example_path_results,4)
 
