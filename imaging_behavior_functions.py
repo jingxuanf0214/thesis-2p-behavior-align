@@ -404,12 +404,32 @@ def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, tri
 #roi_mtx = extract_heatmap(combined_df, "hDeltaB", True)
 
 # for EPG type imaging only 
-def calculate_pva(activity_matrix):
+def calculate_pva_epg(activity_matrix):
     num_neurons, time_steps = activity_matrix.shape
     directions = np.linspace(0, 2*np.pi, num_neurons//2, endpoint=False)
     
     # Repeat directions for both halves of the neuron population
     directions = np.tile(directions, 2)
+    
+    # Calculate vector components for each neuron's activity
+    x_components = np.cos(directions)[:, np.newaxis] * activity_matrix
+    y_components = np.sin(directions)[:, np.newaxis] * activity_matrix
+    
+    # Sum components across neurons for each time step
+    sum_x = np.sum(x_components, axis=0)
+    sum_y = np.sum(y_components, axis=0)
+    
+    # Calculate PVA for each time step
+    pva_phase = np.arctan2(sum_y, sum_x)  # Phase in radians
+    pva_amplitude = np.sqrt(sum_x**2 + sum_y**2)  # Magnitude of the vector
+    return pva_phase, pva_amplitude
+
+def calculate_pva_hdeltab(activity_matrix):
+    num_neurons, time_steps = activity_matrix.shape
+    directions = np.linspace(0, 2*np.pi, num_neurons, endpoint=False)
+    
+    # Repeat directions for both halves of the neuron population
+    #directions = np.tile(directions, 2)
     
     # Calculate vector components for each neuron's activity
     x_components = np.cos(directions)[:, np.newaxis] * activity_matrix
