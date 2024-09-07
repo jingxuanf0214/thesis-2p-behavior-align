@@ -639,7 +639,7 @@ def calc_circu_stats(circu_var,num_bins,example_path_results,trial_num):
 
     return mean_angle, median_angle, mode_angle
 #mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading,30)
-def plot_scatter(behavior_variable, neural_activity, neurons_to_plot, ax=None):
+def plot_scatter(behavior_variable, neural_activity, neurons_to_plot, num_bins=None, ax=None):
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
     for j in neurons_to_plot:
@@ -744,6 +744,37 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     filtered_variable = behavior_variable[(behavior_variable >= lower_cutoff) & (behavior_variable <= upper_cutoff)]
     
     return filtered_variable
+
+def plot_tuning_curve_and_scatter(neural_activity, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num):
+    def generate_plots(neurons_to_plot, behavior_variables, plot_func, ax, is_filtered=False):
+        for j in neurons_to_plot:
+            for i, behavior_variable in enumerate(behavior_variables):
+                plot_func(behavior_variable, neural_activity, [j], num_bins if is_filtered else None, ax=ax[j, i])
+                if is_filtered and i == 3:
+                    ax[j, i].axvline(mean_angle, color='red', label='mean heading')
+                    ax[j, i].axvline(mode_angle, linestyle='--', color='red', label='mode heading')
+                    ax[j, i].legend()
+
+    neurons = neurons_to_plot if neural_activity.shape[0] > 1 else [0]
+
+    # First set of plots (tuning curves)
+    fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
+    if len(ax.shape) == 1:
+        ax = ax[np.newaxis, :]
+    generate_plots(neurons, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
+    plt.tight_layout()
+    plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}.png")
+    plt.close()
+
+    # Second set of plots (scatter plots)
+    fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
+    if len(ax.shape) == 1:
+        ax = ax[np.newaxis, :]
+    generate_plots(neurons, behavioral_variables, plot_scatter, ax)
+    plt.tight_layout()
+    plt.savefig(f"{example_path_results}scatterplot_{trial_num}.png")
+    plt.close()
+
 # Example usage:
 #tuning_curve_1d(behavior_variable, neural_activity,neurons_to_plot,num_bins)
 
@@ -751,103 +782,88 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/odor_trials/to_check/"
-example_path_data = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/data/"
-example_path_results = base_path+"20230612-5_EPGhDeltaB_syntGCAMP7f_odor_apple/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON09/"
+example_path_data = base_path+"20220525-3_MBON09_GCAMP7f/data/"
+example_path_results = base_path+"20220525-3_MBON09_GCAMP7f/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
 #is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
 #print(roi_df.head(10))
     
-def main(example_path_data, example_path_results,trial_num):
-    is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
-    behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
-    xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
-    plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results,trial_num)
+
+def main2(example_path_data, example_path_results, trial_num):
+    # Define key variables
+    behavior_var1, behavior_var2 = 'translationalV', 'heading'
+    roi_kw, roi_kw2 = 'MBON', 'FB'
+    
+    # Load data and preprocess
+    is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data, trial_num)
+    behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor, trial_num, ball_d=9)
+    xPos, yPos = reconstruct_path(behav_df, ball_d=9)
+    plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
+    
+    # Load and validate ROI data
     roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
     dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
+    
     if len(dff_all_rois) < len(hdeltab_index):
         print("raw df/f matrix dimension doesn't align with ROI names")
         return
-    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/":
-        dff_all_rois = dff_all_rois[[0,2,3],:]
+    
+    # Handle special cases
+    special_cases = {
+        "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/": [0, 2, 3],
+        "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/": 'hDeltaB',
+        "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/20220720-3_hDeltaB_GCAMP7f_long/data/": 'hDealtaB'
+    }
+    if example_path_data in special_cases:
+        case = special_cases[example_path_data]
+        if isinstance(case, list):
+            dff_all_rois = dff_all_rois[case, :]
+        else:
+            roi_kw = case
+
+    # Create neural dataframe and combine with behavioral data
     neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
     combined_df = combine_df(behav_df, neural_df)
-    behavior_var1 = 'translationalV'
-    behavior_var2 = 'heading'
-    roi_kw = 'FB4R'
-    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/":
-        roi_kw = 'hDeltaB'
-    if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/20220720-3_hDeltaB_GCAMP7f_long/data/":
-        roi_kw = 'hDealtaB'
-    roi_kw2 = 'FB'
-    roi_kw3 = 'CRE'
+    
+    # Extract and plot data
     do_normalize = True
     roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
-    combined_df_trun, nonpara_summ_df = calc_nonpara(combined_df,roi_kw,roi_kw2,roi_mtx,False)
-    nonpara_plot_bybehav(nonpara_summ_df, nonpara_summ_df, behavior_var1, example_path_results,trial_num)
-    nonpara_plot_bybehav(nonpara_summ_df, combined_df_trun, behavior_var2, example_path_results,trial_num)
-    if not (roi_mtx is None) and do_normalize:
+    combined_df_trun, nonpara_summ_df = calc_nonpara(combined_df, roi_kw, roi_kw2, roi_mtx, False)
+    
+    nonpara_plot_bybehav(nonpara_summ_df, nonpara_summ_df, behavior_var1, example_path_results, trial_num)
+    nonpara_plot_bybehav(nonpara_summ_df, combined_df_trun, behavior_var2, example_path_results, trial_num)
+    
+    if roi_kw == 'hDeltaB' and do_normalize and roi_mtx is not None:
         paramfit_df = fit_sinusoid(neural_df, roi_mtx)
         plot_with_error_shading(paramfit_df, example_path_results, trial_num)
     else:
-        plot_time_series(neural_df, behav_df,example_path_results,trial_num)
-    mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading,30,example_path_results,trial_num)
+        plot_time_series(neural_df, behav_df, example_path_results, trial_num)
+
+    # Calculate and plot statistics
+    mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading, 30, example_path_results, trial_num)
     behavioral_variables = [behav_df.fwV, behav_df.sideV, behav_df.yawV, behav_df.heading]
     filtered_behavior_variables = [filter_based_on_histogram(var, 0.5) for var in behavioral_variables]
-    filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw3 in col]
-    fb_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 in col]
-    neural_df['fb_mean'] = neural_df[fb_columns].mean(axis=1)
-    #filtered_columns = [col for col in combined_df.columns if roi_kw in col]
-    #neural_df_rois = combined_df[filtered_columns]
-    #fit_params = nonpara_summ_df[['Mean','IQR']].T
-    neural_activity = np.array(np.concatenate((neural_df[filtered_columns].T,neural_df[['fb_mean']].T),axis=0))
-    #neural_activity = np.array(neural_df[filtered_columns].T)
+    
+    # Select neural activity based on ROI identity
+    if roi_kw == 'FR1':
+        roi_kw3 = 'CRE'
+        filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw3 in col]
+        fb_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 in col]
+        neural_df['fb_mean'] = neural_df[fb_columns].mean(axis=1)
+        neural_activity = np.concatenate((neural_df[filtered_columns].T, neural_df[['fb_mean']].T), axis=0)
+    else:
+        filtered_columns = [col for col in combined_df.columns if roi_kw in col]
+        neural_activity = np.array(neural_df[filtered_columns].T)
+
+    # Plot tuning curve and scatter plots
     num_bins = 10
     neurons_to_plot = range(neural_activity.shape[0])
     num_behavioral_variables = len(filtered_behavior_variables)
-    #fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
-    if neural_activity.shape[0]>1:
-        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
-        for j in neurons_to_plot:
-            for i, behavior_variable in enumerate(filtered_behavior_variables):
-                tuning_curve_1d(behavior_variable, neural_activity,[j],num_bins,ax=ax[j,i])
-                if i == 3:
-                    ax[j,i].axvline(mean_angle, color = 'red', label = 'mean heading')
-                    ax[j,i].axvline(mode_angle, linestyle = '--',color = 'red', label = 'mode heading')
-                    ax[j,i].legend()
-        plt.tight_layout()
-        #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
-        plt.close()  # Close the plot explicitly after saving to free resources
-        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
-        for j in neurons_to_plot:
-            for i, behavior_variable in enumerate(behavioral_variables):
-                plot_scatter(behavior_variable, neural_activity, [j], ax=ax[j,i])
-        plt.tight_layout()
-        #plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
-        plt.close()  # Close the plot explicitly after saving to free resources
-    elif neural_activity.shape[0]==1:
-        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
-        for i, behavior_variable in enumerate(filtered_behavior_variables):
-            tuning_curve_1d(behavior_variable, neural_activity,[0],num_bins,ax=ax[i])
-            if i == 3:
-                ax[i].axvline(mean_angle, color = 'red', label = 'mean heading')
-                ax[i].axvline(mode_angle, linestyle = '--',color = 'red', label = 'mode heading')
-                ax[i].legend()
-        plt.tight_layout()
-        #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
-        plt.close()  # Close the plot explicitly after saving to free resources
-        fig, ax = plt.subplots(neural_activity.shape[0],num_behavioral_variables,figsize=(num_behavioral_variables*5,neural_activity.shape[0]*5))
-        for i, behavior_variable in enumerate(behavioral_variables):
-            plot_scatter(behavior_variable, neural_activity, [0], ax=ax[i])
-        plt.tight_layout()
-        #plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
-        plt.savefig(example_path_results+'scatterplot_' + str(trial_num) +'.png')
-        plt.close()  # Close the plot explicitly after saving to free resources
+    
+    plot_tuning_curve_and_scatter(neural_activity, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
 
 
 #main(example_path_data, example_path_results,1)
@@ -879,6 +895,7 @@ def calc_peak_correlation_full(series1, series2, max_lag):
     return peak_correlation, peak_lag
 
 # https://jdblischak.github.io/fucci-seq/circ-simulation-correlation.html
+
 def calc_circular_correlation(circular_series, series2):
     circular_series_cos = np.cos(circular_series)
     circular_series_sin = np.sin(circular_series)
@@ -1013,5 +1030,5 @@ def loop_folder(base_path):
         json.dump(corr_dict, file)
     
 #loop_folder(base_path)
-#main(example_path_data, example_path_results,4)
+main2(example_path_data, example_path_results,1)
 
