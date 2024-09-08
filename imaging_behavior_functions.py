@@ -639,19 +639,18 @@ def calc_circu_stats(circu_var,num_bins,example_path_results,trial_num):
 
     return mean_angle, median_angle, mode_angle
 #mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading,30)
-def plot_scatter(behavior_variable, neural_activity, neurons_to_plot, num_bins=None, ax=None):
+def plot_scatter(behavior_variable, filtered_columns, neural_activity, neurons_to_plot, num_bins=None, ax=None):
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
     for j in neurons_to_plot:
         #print(len(behavior_variable))
         ax.scatter(behavior_variable,neural_activity[j,:])
+        ax.set_ylabel(filtered_columns[j])
     ax.set_xlabel(behavior_variable.name)
-    ax.set_ylabel('Average Neural Activity')
     #ax[j,i].legend()
-    ax.set_title('Neural Activity Tuning Curves with SEM')
     #plt.tight_layout()
 
-def tuning_curve_1d(behavior_variable, neural_activity, neurons_to_plot, num_bins, ax=None):
+def tuning_curve_1d(behavior_variable, filtered_columns, neural_activity, neurons_to_plot, num_bins, ax=None):
     """
     Plot tuning curves on the given matplotlib Axes.
 
@@ -680,14 +679,14 @@ def tuning_curve_1d(behavior_variable, neural_activity, neurons_to_plot, num_bin
             binned_activity[i] = np.mean(bin_data)
             binned_sem[i] = sem(bin_data)
 
-        ax.plot(bin_centers, binned_activity, label=f'Neuron {neuron_index}')
+        ax.plot(bin_centers, binned_activity, label=f'{filtered_columns[neuron_index]}')
         ax.fill_between(bin_centers, binned_activity - binned_sem, binned_activity + binned_sem, alpha=0.3)
+        ax.set_ylabel(filtered_columns[neuron_index])
 
     # Setting labels and title
     ax.set_xlabel(behavior_variable.name)
-    ax.set_ylabel('Average Neural Activity')
-    ax.legend()
-    ax.set_title('Neural Activity Tuning Curves with SEM')
+    #ax.set_ylabel('Average Neural Activity')
+    #ax.legend()
     #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
     #plt.close()  # Close the plot explicitly after saving to free resources
 
@@ -745,11 +744,11 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     
     return filtered_variable
 
-def plot_tuning_curve_and_scatter(neural_activity, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num):
-    def generate_plots(neurons_to_plot, behavior_variables, plot_func, ax, is_filtered=False):
+def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num):
+    def generate_plots(neurons_to_plot, filtered_columns, behavior_variables, plot_func, ax, is_filtered=False):
         for j in neurons_to_plot:
             for i, behavior_variable in enumerate(behavior_variables):
-                plot_func(behavior_variable, neural_activity, [j], num_bins if is_filtered else None, ax=ax[j, i])
+                plot_func(behavior_variable, filtered_columns, neural_activity, [j], num_bins if is_filtered else None, ax=ax[j, i])
                 if is_filtered and i == 3:
                     ax[j, i].axvline(mean_angle, color='red', label='mean heading')
                     ax[j, i].axvline(mode_angle, linestyle='--', color='red', label='mode heading')
@@ -761,7 +760,7 @@ def plot_tuning_curve_and_scatter(neural_activity, neurons_to_plot, behavioral_v
     fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
     if len(ax.shape) == 1:
         ax = ax[np.newaxis, :]
-    generate_plots(neurons, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
+    generate_plots(neurons, filtered_columns, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
     plt.tight_layout()
     plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}.png")
     plt.close()
@@ -770,7 +769,7 @@ def plot_tuning_curve_and_scatter(neural_activity, neurons_to_plot, behavioral_v
     fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
     if len(ax.shape) == 1:
         ax = ax[np.newaxis, :]
-    generate_plots(neurons, behavioral_variables, plot_scatter, ax)
+    generate_plots(neurons, filtered_columns, behavioral_variables, plot_scatter, ax)
     plt.tight_layout()
     plt.savefig(f"{example_path_results}scatterplot_{trial_num}.png")
     plt.close()
@@ -792,7 +791,7 @@ example_path_results = base_path+"20220525-3_MBON09_GCAMP7f/results/"
 #print(roi_df.head(10))
     
 
-def main2(example_path_data, example_path_results, trial_num):
+def main(example_path_data, example_path_results, trial_num):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
     roi_kw, roi_kw2 = 'MBON', 'FB'
@@ -863,7 +862,7 @@ def main2(example_path_data, example_path_results, trial_num):
     neurons_to_plot = range(neural_activity.shape[0])
     num_behavioral_variables = len(filtered_behavior_variables)
     
-    plot_tuning_curve_and_scatter(neural_activity, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
+    plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
 
 
 #main(example_path_data, example_path_results,1)
@@ -983,7 +982,7 @@ def save_dfs(example_path_data, example_path_results,trial_num,hdf5_file_path,fo
     combined_df.to_hdf(hdf5_file_path, key=hdf_key, mode='a')
         
 
-def loop_trial(example_path_data, example_path_results,corr_dict = None,hdf5_file_path=None, folder_name=None):
+'''def loop_trial(example_path_data, example_path_results,corr_dict = None,hdf5_file_path=None, folder_name=None):
     qualified_trials = find_complete_trials(example_path_data)
     if qualified_trials == []:
         return
@@ -995,16 +994,17 @@ def loop_trial(example_path_data, example_path_results,corr_dict = None,hdf5_fil
 
 #loop_trial(example_path_data, example_path_results)
 
-def loop_folder(base_path):
+def loop_folder(base_path, calc_corr):
     # Ensure base_path is a directory
     if not os.path.isdir(base_path):
         print(f"{base_path} is not a directory.")
         return
-    hdf5_file_path = base_path + 'pds_all_flies.h5'
-    corr_dict = {}
-    corr_dict['phase'] = []
-    corr_dict['amplitude'] = []
-    corr_dict['baseline'] = []
+    if calc_corr:
+        hdf5_file_path = base_path + 'pds_all_flies.h5'
+        corr_dict = {}
+        corr_dict['phase'] = []
+        corr_dict['amplitude'] = []
+        corr_dict['baseline'] = []
     #corr_dict['heading'] = []
     # Loop through all items in base_path
     for folder_name in os.listdir(base_path):
@@ -1027,8 +1027,65 @@ def loop_folder(base_path):
                 loop_trial(example_path_data, example_path_results,corr_dict,hdf5_file_path,folder_name)
     file_path = base_path+'summary_stats.json'
     with open(file_path, 'w') as file:
-        json.dump(corr_dict, file)
+        json.dump(corr_dict, file)'''
+
+def loop_trial(example_path_data, example_path_results, corr_dict=None, hdf5_file_path=None, folder_name=None, calc_corr=False):
+    """
+    Loop through qualified trials, run the main function, and optionally calculate correlation.
+    """
+    qualified_trials = find_complete_trials(example_path_data)
+    
+    if not qualified_trials:
+        return
+
+    print(f"Qualified trial numbers are {qualified_trials}")
+    
+    for trial_num in qualified_trials:
+        main(example_path_data, example_path_results, trial_num)
+        
+        # Optionally calculate correlation
+        if calc_corr and corr_dict is not None:
+            calc_correlation_batch(example_path_data, example_path_results, trial_num, corr_dict)
+
+
+def loop_folder(base_path, calc_corr=False):
+    """
+    Loop through all folders in the base path, process each trial, and optionally calculate correlation.
+    """
+    # Ensure base_path is a valid directory
+    if not os.path.isdir(base_path):
+        print(f"{base_path} is not a directory.")
+        return
+    
+    # Initialize correlation dictionary if calculating correlation
+    corr_dict, hdf5_file_path = None, None
+    if calc_corr:
+        hdf5_file_path = os.path.join(base_path, 'pds_all_flies.h5')
+        corr_dict = {'phase': [], 'amplitude': [], 'baseline': []}
+
+    # Loop through all subfolders in base_path
+    for folder_name in os.listdir(base_path):
+        folder_path = os.path.join(base_path, folder_name)
+        
+        if os.path.isdir(folder_path):
+            example_path_data = folder_path + '/data/'
+            example_path_results = folder_path + '/results/'
+            
+            # Check if both 'data' and 'results' subfolders exist
+            if os.path.exists(example_path_data) and os.path.exists(example_path_results):
+                print(f"Processing Data Path: {example_path_data}")
+                print(f"Processing Results Path: {example_path_results}")
+                
+                # Process the trials in the current folder
+                loop_trial(example_path_data, example_path_results, corr_dict, hdf5_file_path, folder_name, calc_corr)
+
+    # Save correlation results if applicable
+    if calc_corr and corr_dict:
+        file_path = os.path.join(base_path, 'summary_stats.json')
+        with open(file_path, 'w') as file:
+            json.dump(corr_dict, file)
+
     
 #loop_folder(base_path)
-main2(example_path_data, example_path_results,1)
+#main(example_path_data, example_path_results,1)
 
