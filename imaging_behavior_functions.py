@@ -745,7 +745,7 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     return filtered_variable
 
 def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num):
-    def generate_plots(neurons_to_plot, filtered_columns, behavior_variables, plot_func, ax, is_filtered=False):
+    def generate_plots(neurons_to_plot, neural_activity, filtered_columns, behavior_variables, plot_func, ax, is_filtered=False):
         for j in neurons_to_plot:
             for i, behavior_variable in enumerate(behavior_variables):
                 plot_func(behavior_variable, filtered_columns, neural_activity, [j], num_bins if is_filtered else None, ax=ax[j, i])
@@ -760,7 +760,7 @@ def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_
     fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
     if len(ax.shape) == 1:
         ax = ax[np.newaxis, :]
-    generate_plots(neurons, filtered_columns, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
+    generate_plots(neurons, neural_activity, filtered_columns, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
     plt.tight_layout()
     plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}.png")
     plt.close()
@@ -769,10 +769,19 @@ def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_
     fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
     if len(ax.shape) == 1:
         ax = ax[np.newaxis, :]
-    generate_plots(neurons, filtered_columns, behavioral_variables, plot_scatter, ax)
+    generate_plots(neurons, neural_activity, filtered_columns, behavioral_variables, plot_scatter, ax)
     plt.tight_layout()
     plt.savefig(f"{example_path_results}scatterplot_{trial_num}.png")
     plt.close()
+
+
+    # plot forwardV vs. heading as sanity check
+    fig, ax = plt.subplots(figsize=(5,5))
+    generate_plots([0], np.array([filtered_behavior_variables[0]]), [filtered_behavior_variables[0].name], [filtered_behavior_variables[3]], tuning_curve_1d, np.array([[ax]]), is_filtered=True)
+    plt.tight_layout()
+    plt.savefig(f"{example_path_results}1d_tuning_curve_ctrl_{trial_num}.png")
+    plt.close()
+
 
 # Example usage:
 #tuning_curve_1d(behavior_variable, neural_activity,neurons_to_plot,num_bins)
@@ -981,7 +990,8 @@ def main(example_path_data, example_path_results, trial_num):
     plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
 
 
-#main(example_path_data, example_path_results,1)
+main(example_path_data, example_path_results,1)
+
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
     series1 = series1 - np.mean(series1)
