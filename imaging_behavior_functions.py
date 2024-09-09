@@ -777,7 +777,7 @@ def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_
 
     # plot forwardV vs. heading as sanity check
     fig, ax = plt.subplots(figsize=(5,5))
-    generate_plots([0], np.array([filtered_behavior_variables[0]]), [filtered_behavior_variables[0].name], [filtered_behavior_variables[3]], tuning_curve_1d, np.array([[ax]]), is_filtered=True)
+    generate_plots([0], np.array([behavioral_variables[0]]), [filtered_behavior_variables[0].name], [filtered_behavior_variables[3]], tuning_curve_1d, np.array([[ax]]), is_filtered=True)
     plt.tight_layout()
     plt.savefig(f"{example_path_results}1d_tuning_curve_ctrl_{trial_num}.png")
     plt.close()
@@ -990,7 +990,7 @@ def main(example_path_data, example_path_results, trial_num):
     plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
 
 
-main(example_path_data, example_path_results,1)
+#main(example_path_data, example_path_results,1)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
@@ -1173,6 +1173,7 @@ def loop_trial(example_path_data, example_path_results, corr_dict=None, hdf5_fil
         if calc_corr and corr_dict is not None:
             calc_correlation_batch(example_path_data, example_path_results, trial_num, corr_dict)
 
+#loop_trial(example_path_data, example_path_results)
 
 def loop_folder(base_path, calc_corr=False):
     """
@@ -1212,6 +1213,6 @@ def loop_folder(base_path, calc_corr=False):
             json.dump(corr_dict, file)
 
     
-#loop_folder(base_path)
+loop_folder(base_path)
 #main(example_path_data, example_path_results,1)
 
