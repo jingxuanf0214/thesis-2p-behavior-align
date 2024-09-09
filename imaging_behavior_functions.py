@@ -778,6 +778,122 @@ def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_
 #tuning_curve_1d(behavior_variable, neural_activity,neurons_to_plot,num_bins)
 
 
+def calculate_theta_g_rho(df, window_size=30, speed_threshold=0.67, cue_jump_time=5):
+    """
+    Calculate the goal direction (theta_g) and consistency of head direction (rho_t) for each time point.
+    
+    Parameters:
+    - df: DataFrame containing 'forward', 'side', 'yaw', and 'heading' columns (time series of a trial).
+    - window_size: The size of the window in seconds to compute the rolling statistics.
+    - speed_threshold: Speed threshold below which the fly is considered standing still.
+    - cue_jump_time: Time after the cue jump (in seconds) to exclude data points.
+    
+    Returns:
+    - A DataFrame with 'theta_g' and 'rho_t' columns added (same length as input).
+    """
+    # Calculate cumulative speed (forward + side + yaw)
+    df['speed'] = np.sqrt(df['fwV']**2 + df['sideV']**2 + df['yawV']**2)
+    
+    # Initialize columns for theta_g and rho_t with NaN values
+    df['theta_g'] = np.nan
+    df['rho_t'] = np.nan
+    
+    # Filter data points where speed is above the threshold
+    valid_indices = df[df['speed'] > speed_threshold].index
+    
+    # Sliding window calculation
+    half_window = window_size // 2
+    for i in valid_indices:
+        # Define window boundaries, ensuring we don't exceed dataframe limits
+        start_idx = max(i - half_window, 0)
+        end_idx = min(i + half_window, len(df) - 1)
+        
+        # Extract window of head directions
+        head_window = df['heading'].iloc[start_idx:end_idx]
+        
+        # Calculate theta_g (goal direction)
+        sum_sin = np.sum(np.sin(head_window))
+        sum_cos = np.sum(np.cos(head_window))
+        theta_g = np.arctan2(sum_sin, sum_cos)
+
+        # Ensure theta_g is between 0 and 2*pi
+        theta_g = np.mod(theta_g, 2 * np.pi)
+        
+        # Calculate rho_t (consistency of head direction)
+        N_w = len(head_window)
+        rho_t = np.sqrt((sum_cos / N_w)**2 + (sum_sin / N_w)**2)
+        
+        # Store in DataFrame at index i
+        df.at[i, 'theta_g'] = theta_g
+        df.at[i, 'rho_t'] = rho_t
+    
+    return df
+
+
+def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_below_rho=0.5, min_inactivity_duration=2, time_column='time'):
+    """
+    Segments the fly's path based on changes in head direction consistency (rho_t).
+
+    Parameters:
+    - df: DataFrame containing 'theta_g', 'rho_t', and 'speed' columns (time series of a trial).
+    - rho_threshold: Threshold for rho_t to indicate a segment change (default 0.88).
+    - speed_threshold: Minimum cumulative speed threshold to consider the fly active (default 0.67 rad/s).
+    - min_duration_below_rho: Minimum time (in seconds) for rho_t to stay below the threshold to count as a segment (default 0.5s).
+    - min_inactivity_duration: Minimum inactivity duration (in seconds) to discard segments (default 2s).
+    - time_column: The name of the time column in the DataFrame.
+    
+    Returns:
+    - A DataFrame with an added 'segment' column indicating segment labels.
+    """
+    # Initialize segment labels
+    df['segment'] = np.nan
+    segment_id = 0
+    
+    # Time step calculation assuming evenly spaced data (if not provided, you can adjust accordingly)
+    #time_step = df[time_column].diff().median()
+    
+    # Segment flag (True if we are within a segment, False otherwise)
+    in_segment = False
+    segment_start_idx = None
+    below_rho_start_idx = None
+    
+    for i in range(1, len(df)):
+        # Check if we are crossing the rho_t threshold
+        if df['rho_t'].iloc[i] > rho_threshold:
+            # Handle brief dips below the threshold (less than 0.5s)
+            if not in_segment and df[time_column].iloc[i] - df[time_column].iloc[segment_start_idx or 0] >= min_duration_below_rho:
+                in_segment = True
+                segment_start_idx = i
+        else:
+            # If we were in a segment, end it and mark the segment in the DataFrame
+            if in_segment:
+                if below_rho_start_idx is None:
+                        # Start counting time above the threshold
+                        below_rho_start_idx = i
+                elif df[time_column].iloc[i] - df[time_column].iloc[below_rho_start_idx] >= min_duration_below_rho:
+                    in_segment = False
+                    df.loc[segment_start_idx:i, 'segment'] = segment_id
+                    segment_id += 1
+                    below_rho_start_idx = None
+
+        # Discard segments where rho_t == 1 (indicating the fly did not change head direction)
+        if df['rho_t'].iloc[i] == 1:
+            df.loc[segment_start_idx:i, 'segment'] = np.nan
+
+        # Discard inactive segments (where speed is below speed_threshold for 2s)
+        inactive_duration = df[(df['speed'] < speed_threshold) & (df['segment'] == segment_id)]
+        if len(inactive_duration) > 0 and inactive_duration[time_column].iloc[-1] - inactive_duration[time_column].iloc[0] >= min_inactivity_duration:
+            df.loc[segment_start_idx:i, 'segment'] = np.nan
+
+    # Final adjustments for handling the last segment
+    if in_segment:
+        df.loc[segment_start_idx:, 'segment'] = segment_id
+
+    return df
+
+
+
+
 # encoding, decoding models 
 # calcium imaging GLM 
 
