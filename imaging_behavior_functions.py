@@ -744,7 +744,7 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     
     return filtered_variable
 
-def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num):
+def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, tuning_whole_session, segment_id = None):
     def generate_plots(neurons_to_plot, neural_activity, filtered_columns, behavior_variables, plot_func, ax, is_filtered=False):
         for j in neurons_to_plot:
             for i, behavior_variable in enumerate(behavior_variables):
@@ -762,7 +762,10 @@ def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_
         ax = ax[np.newaxis, :]
     generate_plots(neurons, neural_activity, filtered_columns, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
     plt.tight_layout()
-    plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}.png")
+    if tuning_whole_session:
+        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}.png")
+    else: 
+        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}_segment_{segment_id}.png")
     plt.close()
 
     # Second set of plots (scatter plots)
@@ -771,7 +774,10 @@ def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_
         ax = ax[np.newaxis, :]
     generate_plots(neurons, neural_activity, filtered_columns, behavioral_variables, plot_scatter, ax)
     plt.tight_layout()
-    plt.savefig(f"{example_path_results}scatterplot_{trial_num}.png")
+    if tuning_whole_session:
+        plt.savefig(f"{example_path_results}scatterplot_{trial_num}.png")
+    else: 
+        plt.savefig(f"{example_path_results}scatterplot_{trial_num}_segment_{segment_id}.png")
     plt.close()
 
 
@@ -839,7 +845,7 @@ def calculate_theta_g_rho(df, window_size=30, speed_threshold=0.67, cue_jump_tim
     return df
 
 
-def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_below_rho=0.5, min_inactivity_duration=2, time_column='time'):
+def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_below_rho=1.0, min_inactivity_duration=2, time_column='time'):
     """
     Segments the fly's path based on changes in head direction consistency (rho_t).
 
@@ -900,6 +906,36 @@ def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_belo
 
     return df
 
+def process_behavioral_variables(behav_df, example_path_results, trial_num):
+    """
+    Processes the behavioral variables from the behavior dataframe.
+    
+    Parameters:
+    - behav_df: DataFrame containing the behavioral data (with columns 'fwV', 'sideV', 'yawV', and 'heading').
+    - example_path_results: Path where results are saved.
+    - trial_num: Trial number for saving results.
+    
+    Returns:
+    - mean_angle: Mean head direction angle.
+    - median_angle: Median head direction angle.
+    - mode_angle: Mode head direction angle.
+    - behavioral_variables: List of raw behavioral variables.
+    - filtered_behavior_variables: List of filtered behavioral variables.
+    """
+    # Calculate circular statistics (mean, median, and mode angles)
+    mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading, 30, example_path_results, trial_num)
+    
+    # Define the behavioral variables
+    behavioral_variables = [behav_df.fwV, behav_df.sideV, behav_df.yawV, behav_df.heading]
+    
+    # Filter behavioral variables based on histogram
+    filtered_behavior_variables = [filter_based_on_histogram(var, 0.5) for var in behavioral_variables]
+    num_behavioral_variables = len(filtered_behavior_variables)
+    
+    return mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables
+
+# Example usage:
+# mean_angle, median_angle, mode_angle, behavioral_vars, filtered_vars = process_behavioral_variables(behav_df, example_path_results, trial_num)
 
 
 
@@ -916,7 +952,7 @@ example_path_results = base_path+"20220525-3_MBON09_GCAMP7f/results/"
 #print(roi_df.head(10))
     
 
-def main(example_path_data, example_path_results, trial_num):
+def main(example_path_data, example_path_results, trial_num, tuning_whole_session=True):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
     roi_kw, roi_kw2 = 'MBON', 'FB'
@@ -950,6 +986,8 @@ def main(example_path_data, example_path_results, trial_num):
 
     # Create neural dataframe and combine with behavioral data
     neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
+    behav_df = calculate_theta_g_rho(behav_df)
+    behav_df = segment_path(behav_df,rho_threshold=0.88)
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -966,10 +1004,6 @@ def main(example_path_data, example_path_results, trial_num):
     else:
         plot_time_series(neural_df, behav_df, example_path_results, trial_num)
 
-    # Calculate and plot statistics
-    mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading, 30, example_path_results, trial_num)
-    behavioral_variables = [behav_df.fwV, behav_df.sideV, behav_df.yawV, behav_df.heading]
-    filtered_behavior_variables = [filter_based_on_histogram(var, 0.5) for var in behavioral_variables]
     
     # Select neural activity based on ROI identity
     if roi_kw == 'FR1':
@@ -980,17 +1014,30 @@ def main(example_path_data, example_path_results, trial_num):
         neural_activity = np.concatenate((neural_df[filtered_columns].T, neural_df[['fb_mean']].T), axis=0)
     else:
         filtered_columns = [col for col in combined_df.columns if roi_kw in col]
-        neural_activity = np.array(neural_df[filtered_columns].T)
+        #neural_activity = np.array(neural_df[filtered_columns].T)
+        neural_activity = neural_df[filtered_columns]
 
     # Plot tuning curve and scatter plots
     num_bins = 10
-    neurons_to_plot = range(neural_activity.shape[0])
-    num_behavioral_variables = len(filtered_behavior_variables)
-    
-    plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
+    neurons_to_plot = range(neural_activity.shape[1])
+    # not segment
+    if tuning_whole_session:
+        # Calculate and plot statistics
+        mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df, example_path_results, trial_num)
+        plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
+    else:
+        seg_threshold = 50
+        unique_seg = combined_df['segment'].unique()
+        unique_seg = unique_seg[~np.isnan(unique_seg)]
+        for i in range(len(unique_seg)):
+            if np.sum(behav_df['segment'] == unique_seg[i]) > seg_threshold:
+                neural_activity_i = neural_activity[behav_df['segment'] == unique_seg[i]]
+                behav_df_i = behav_df[behav_df['segment'] == unique_seg[i]]
+                mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df_i, example_path_results, trial_num)
+                plot_tuning_curve_and_scatter(np.array(neural_activity_i.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, tuning_whole_session, unique_seg[i])
 
 
-#main(example_path_data, example_path_results,1)
+#main(example_path_data, example_path_results,1,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
@@ -1213,6 +1260,6 @@ def loop_folder(base_path, calc_corr=False):
             json.dump(corr_dict, file)
 
     
-loop_folder(base_path)
+#loop_folder(base_path)
 #main(example_path_data, example_path_results,1)
 
