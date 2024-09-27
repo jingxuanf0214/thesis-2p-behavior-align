@@ -192,6 +192,7 @@ def move_struct_files(pathname1):
 
 # Example usage
 #move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging')
+#move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging')
 
 def move_odor_folders(pathname1):
     # Define the path for the 'odor_trials' folder

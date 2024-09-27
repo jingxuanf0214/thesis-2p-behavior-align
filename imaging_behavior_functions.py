@@ -22,6 +22,7 @@ from scipy.stats import circmean, circstd
 from scipy.stats import sem
 import json
 from matplotlib.widgets import Button
+from abc import ABC, abstractmethod
 
 def is_notebook():
     try:
@@ -304,21 +305,9 @@ def plot_fly_traj_interactive(xPos, yPos, behav_df, label, example_path_results,
     return clicked_indices
 
 #plot_fly_traj(xPos, yPos, behav_df,'odor', example_path_results)
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON09/"
-example_path_data = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/data/"
-example_path_results = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/results/"
-trial_num = 1
-odor_threshold = 5
-time_interval_threshold = 16  # Assuming time is in seconds or an equivalent unit
-k = 8
-window_size = 30
 
-is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
-behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
-xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
-
-clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
-print("Indices of clicked points:", clicked_indices)
+#clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
+#print("Indices of clicked points:", clicked_indices)
 
 def get_roi_seq(roi_df):
     roi_df['trialNum'] = roi_df['trialNum'].apply(lambda x: x[0][0])
@@ -938,7 +927,7 @@ def calculate_theta_g_rho(df, window_size=30, speed_threshold=0.67, cue_jump_tim
     return df
 
 
-def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_below_rho=1.0, min_inactivity_duration=2, time_column='time'):
+'''def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_below_rho=1.0, min_inactivity_duration=2, time_column='time'):
     """
     Segments the fly's path based on changes in head direction consistency (rho_t).
 
@@ -997,7 +986,86 @@ def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_belo
     if in_segment:
         df.loc[segment_start_idx:, 'segment'] = segment_id
 
-    return df
+    return df'''
+
+class PathSegmenter(ABC):
+    @abstractmethod
+    def segment(self, df):
+        pass
+
+class RhoThresholdSegmenter(PathSegmenter):
+    def __init__(self, rho_threshold=0.88, speed_threshold=0.67, min_duration_below_rho=1.0, min_inactivity_duration=2, time_column='time'):
+        self.rho_threshold = rho_threshold
+        self.speed_threshold = speed_threshold
+        self.min_duration_below_rho = min_duration_below_rho
+        self.min_inactivity_duration = min_inactivity_duration
+        self.time_column = time_column
+
+    def segment(self, df):
+        # Implementation of the segment_path function you provided
+        result_df = df.copy()
+        result_df['segment'] = np.nan
+        segment_id = 0
+        
+        in_segment = False
+        segment_start_idx = None
+        below_rho_start_idx = None
+        
+        for i in range(1, len(result_df)):
+            if result_df['rho_t'].iloc[i] > self.rho_threshold:
+                if not in_segment and result_df[self.time_column].iloc[i] - result_df[self.time_column].iloc[segment_start_idx or 0] >= self.min_duration_below_rho:
+                    in_segment = True
+                    segment_start_idx = i
+            else:
+                if in_segment:
+                    if below_rho_start_idx is None:
+                        below_rho_start_idx = i
+                    elif result_df[self.time_column].iloc[i] - result_df[self.time_column].iloc[below_rho_start_idx] >= self.min_duration_below_rho:
+                        in_segment = False
+                        result_df.loc[segment_start_idx:i, 'segment'] = segment_id
+                        segment_id += 1
+                        below_rho_start_idx = None
+
+            if result_df['rho_t'].iloc[i] == 1:
+                result_df.loc[segment_start_idx:i, 'segment'] = np.nan
+
+            inactive_duration = result_df[(result_df['speed'] < self.speed_threshold) & (result_df['segment'] == segment_id)]
+            if len(inactive_duration) > 0 and inactive_duration[self.time_column].iloc[-1] - inactive_duration[self.time_column].iloc[0] >= self.min_inactivity_duration:
+                result_df.loc[segment_start_idx:i, 'segment'] = np.nan
+
+        if in_segment:
+            result_df.loc[segment_start_idx:, 'segment'] = segment_id
+
+        return result_df
+
+class ManualSegmenter(PathSegmenter):
+    def __init__(self, indices):
+        self.indices = indices
+
+    def segment(self, df):
+        result_df = df.copy()
+        result_df['segment'] = np.nan
+        for i, idx in enumerate(self.indices[:-1]):
+            result_df.loc[idx:self.indices[i+1], 'segment'] = i
+        return result_df
+
+class PathSegmentationFactory:
+    @staticmethod
+    def create_segmenter(method, **kwargs):
+        if method == 'rho_threshold':
+            return RhoThresholdSegmenter(**kwargs)
+        elif method == 'manual':
+            return ManualSegmenter(**kwargs)
+        else:
+            raise ValueError(f"Unknown segmentation method: {method}")
+
+# Usage example:
+# factory = PathSegmentationFactory()
+# rho_segmenter = factory.create_segmenter('rho_threshold', rho_threshold=0.9)
+# manual_segmenter = factory.create_segmenter('manual', indices=[0, 100, 200, 300])
+# 
+# segmented_df_rho = rho_segmenter.segment(df)
+# segmented_df_manual = manual_segmenter.segment(df)
 
 def process_behavioral_variables(behav_df, example_path_results, trial_num):
     """
@@ -1036,8 +1104,8 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 # calcium imaging GLM 
 
 base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON09/"
-example_path_data = base_path+"20220525-3_MBON09_GCAMP7f/data/"
-example_path_results = base_path+"20220525-3_MBON09_GCAMP7f/results/"
+example_path_data = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/data/"
+example_path_results = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1045,17 +1113,19 @@ example_path_results = base_path+"20220525-3_MBON09_GCAMP7f/results/"
 #print(roi_df.head(10))
     
 
-def main(example_path_data, example_path_results, trial_num, tuning_whole_session=True):
+def main(example_path_data, example_path_results, trial_num, tuning_whole_session=False, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
     roi_kw, roi_kw2 = 'MBON', 'FB'
-    
+    #tuning_whole_session = False
+
     # Load data and preprocess
     is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data, trial_num)
     behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor, trial_num, ball_d=9)
     xPos, yPos = reconstruct_path(behav_df, ball_d=9)
-    plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
-    
+    #plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
+    clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
+    print("Indices of clicked points:", clicked_indices)
     # Load and validate ROI data
     roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
     dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
@@ -1080,7 +1150,10 @@ def main(example_path_data, example_path_results, trial_num, tuning_whole_sessio
     # Create neural dataframe and combine with behavioral data
     neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
     behav_df = calculate_theta_g_rho(behav_df)
-    behav_df = segment_path(behav_df,rho_threshold=0.88)
+    if not tuning_whole_session:
+        factory = PathSegmentationFactory()
+        manual_segmenter = factory.create_segmenter(segment_method, indices=[0, 100, 200, 300])
+        behav_df = manual_segmenter.segment(behav_df)
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -1354,5 +1427,5 @@ def loop_folder(base_path, calc_corr=False):
 
     
 #loop_folder(base_path)
-#main(example_path_data, example_path_results,1)
+main(example_path_data, example_path_results,1)
 
