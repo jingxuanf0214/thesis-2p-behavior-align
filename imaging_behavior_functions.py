@@ -21,6 +21,7 @@ import shutil
 from scipy.stats import circmean, circstd
 from scipy.stats import sem
 import json
+from matplotlib.widgets import Button
 
 def is_notebook():
     try:
@@ -225,7 +226,99 @@ def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results,trial_num):
     plt.savefig(file_path)
     plt.close()  # Close the plot explicitly after saving to free resources
 
+def plot_fly_traj_interactive(xPos, yPos, behav_df, label, example_path_results, trial_num):
+    x_range = max(xPos) - min(xPos)
+    y_range = max(yPos) - min(yPos)
+    aspect_ratio = y_range / x_range
+
+    fig_width = 10
+    fig_height = fig_width * aspect_ratio
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    if label in behav_df.columns:
+        scatter = ax.scatter(xPos, yPos, c=behav_df[label], s=3)
+        plt.colorbar(scatter)
+    else:
+        ax.scatter(xPos, yPos, s=3)
+        label = "nothing"
+    ax.scatter(0, 0, color='red')
+
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_xlabel('x position')
+    ax.set_ylabel('y position')
+    ax.set_title('Fly Trajectory')
+
+    selected_points = []
+    line, = ax.plot([], [], 'ro-', linewidth=2, markersize=8)
+
+    def onclick(event):
+        if event.inaxes != ax:
+            return
+        selected_points.append((event.xdata, event.ydata))
+        x = [p[0] for p in selected_points]
+        y = [p[1] for p in selected_points]
+        line.set_data(x, y)
+        fig.canvas.draw()
+
+    def on_finish(event):
+        plt.close(fig)
+
+    fig.canvas.mpl_connect('button_press_event', onclick)
+
+    finish_ax = plt.axes([0.81, 0.05, 0.1, 0.075])
+    finish_button = Button(finish_ax, 'Finish')
+    finish_button.on_clicked(on_finish)
+
+    plt.show()
+
+    # Find indices of clicked points
+    clicked_indices = []
+    for point in selected_points:
+        distances = np.sqrt((xPos - point[0])**2 + (yPos - point[1])**2)
+        closest_index = np.argmin(distances)
+        clicked_indices.append(closest_index)
+
+    # Save the plot
+    file_path = os.path.join(example_path_results, f'fly_trajectory_colored_by_{label}_trial_{str(trial_num)}.png')
+    dir_path = os.path.dirname(file_path)
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    plt.figure(figsize=(fig_width, fig_height))
+    if label in behav_df.columns:
+        plt.scatter(xPos, yPos, c=behav_df[label], s=3)
+        plt.colorbar()
+    else:
+        plt.scatter(xPos, yPos, s=3)
+    plt.scatter(0, 0, color='red')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.xlabel('x position')
+    plt.ylabel('y position')
+    plt.title('Fly Trajectory')
+    for i, idx in enumerate(clicked_indices):
+        plt.plot(xPos[idx], yPos[idx], 'ro', markersize=8)
+        plt.text(xPos[idx], yPos[idx], f' {i+1}', fontsize=12, verticalalignment='bottom')
+    plt.savefig(file_path)
+    plt.close()
+
+    return clicked_indices
+
 #plot_fly_traj(xPos, yPos, behav_df,'odor', example_path_results)
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON09/"
+example_path_data = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/data/"
+example_path_results = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/results/"
+trial_num = 1
+odor_threshold = 5
+time_interval_threshold = 16  # Assuming time is in seconds or an equivalent unit
+k = 8
+window_size = 30
+
+is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
+behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9)
+xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
+
+clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
+print("Indices of clicked points:", clicked_indices)
 
 def get_roi_seq(roi_df):
     roi_df['trialNum'] = roi_df['trialNum'].apply(lambda x: x[0][0])
