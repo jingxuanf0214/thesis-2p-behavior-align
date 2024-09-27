@@ -191,7 +191,7 @@ def move_struct_files(pathname1):
                         shutil.move(source_file_path, destination_file_path)
 
 # Example usage
-move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging')
+#move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging')
 
 def move_odor_folders(pathname1):
     # Define the path for the 'odor_trials' folder
@@ -365,3 +365,54 @@ def move_folders_containing_odor(pathname):
             print(f"Moved {folder_path} to {dest_path}")
 
 #move_folders_containing_odor(base_path)
+            
+import glob
+
+def remove_empty_dirs(path):
+    for root, dirs, files in os.walk(path, topdown=False):
+        for dir in dirs:
+            dir_path = os.path.join(root, dir)
+            if not os.listdir(dir_path):
+                os.rmdir(dir_path)
+                print(f"Removed empty directory: {dir_path}")
+
+def express_lane(base_dir):
+    todo_dir = base_dir  # os.path.join(base_dir, "todo")
+    if os.path.exists(todo_dir):
+        express_dir = os.path.join(base_dir, "express")
+        
+        # Create express directory if it doesn't exist
+        os.makedirs(express_dir, exist_ok=True)
+        
+        # Remove old files in express directory
+        for file in os.listdir(express_dir):
+            file_path = os.path.join(express_dir, file)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        
+        # Get all PNG files in todo directory that start with '1'
+        png_files = glob.glob(os.path.join(todo_dir, "**", "1_*.png"), recursive=True)
+        
+        # Create symlinks
+        for file in png_files:
+            file_name = os.path.basename(file)
+            symlink_path = os.path.join(express_dir, file_name)
+            
+            # If a symlink with this name already exists, add a numeric suffix
+            i = 1
+            while os.path.exists(symlink_path):
+                base_name, ext = os.path.splitext(file_name)
+                symlink_path = os.path.join(express_dir, f"{base_name}_{i}{ext}")
+                i += 1
+            
+            # Create symlink
+            os.symlink(file, symlink_path)
+            print(f"Created symlink: {symlink_path} -> {file}")
+        
+        remove_empty_dirs(base_dir)
+        print("Symlink creation completed.")
+    else:
+        print("No 'todo' folder from which to symlink.")
+
+# Example usage:
+express_lane('/Volumes/Neurobio/wilsonlab/banc/matching/fafb/images/todo/DAN')
