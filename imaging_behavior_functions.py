@@ -780,7 +780,7 @@ def tuning_curve_1d(behavior_variable, filtered_columns, neural_activity, neuron
 
 
 
-def filter_based_on_histogram(behavior_variable, min_freq_threshold):
+'''def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     """
     Filters the behavioral variable data to remove points distant from the main mode,
     isolated by at least two consecutive bins with very low frequency. Automatically adjusts
@@ -804,6 +804,53 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     counts, bin_edges = np.histogram(behavior_variable, bins=bins)
     #total_points = n
     #freqs = counts / total_points  # Frequency of each bin
+    
+    # Identify bins below the frequency threshold
+    low_freq_bins_mask = counts < min_freq_threshold
+    
+    # Find indices where two consecutive bins are below the threshold
+    two_consecutive_low_bins = np.where(np.convolve(low_freq_bins_mask, [1,1], mode='valid') == 2)[0]
+    
+    if two_consecutive_low_bins.size == 0:
+        return behavior_variable  # No such consecutive low bins, return original series
+    
+    # Determine cutoffs
+    mode_bin_index = np.argmax(counts)
+    lower_cutoff_bins = two_consecutive_low_bins[two_consecutive_low_bins < mode_bin_index]
+    upper_cutoff_bins = two_consecutive_low_bins[two_consecutive_low_bins > mode_bin_index]
+    lower_cutoff = bin_edges[0] if lower_cutoff_bins.size == 0 else bin_edges[lower_cutoff_bins.max() + 2]  # +2 to include the low bin
+    upper_cutoff = bin_edges[-1] if upper_cutoff_bins.size == 0 else bin_edges[upper_cutoff_bins.min()]
+    
+    # Filter the behavioral variable
+    filtered_variable = behavior_variable[(behavior_variable >= lower_cutoff) & (behavior_variable <= upper_cutoff)]
+    
+    return filtered_variable'''
+
+def filter_based_on_histogram(behavior_variable, min_freq_threshold):
+    """
+    Filters the behavioral variable data to remove points distant from the main mode,
+    isolated by at least two consecutive bins with very low frequency. Automatically adjusts
+    bins based on the Freedman-Diaconis rule. Skips filtering if the variable name is 'heading'.
+    
+    Parameters:
+    - behavior_variable: Pandas Series, the behavioral variable data.
+    - min_freq_threshold: The minimum frequency (as a proportion of total) to consider a bin as non-negligible.
+    
+    Returns:
+    - Pandas Series, filtered behavioral variable data (or original data if it's 'heading').
+    """
+    # Check if the variable is 'heading'
+    if behavior_variable.name == 'heading':
+        return behavior_variable  # Return the original data without filtering
+
+    # Calculate bin width using the Freedman-Diaconis rule
+    bin_width = 1
+    range_ = np.max(behavior_variable) - np.min(behavior_variable)
+    bins = int(np.round(range_ / bin_width))
+    print(bins)
+    
+    # Compute the histogram with the calculated number of bins
+    counts, bin_edges = np.histogram(behavior_variable, bins=bins)
     
     # Identify bins below the frequency threshold
     low_freq_bins_mask = counts < min_freq_threshold
@@ -1152,7 +1199,7 @@ def main(example_path_data, example_path_results, trial_num, tuning_whole_sessio
     behav_df = calculate_theta_g_rho(behav_df)
     if not tuning_whole_session:
         factory = PathSegmentationFactory()
-        manual_segmenter = factory.create_segmenter(segment_method, indices=[0, 100, 200, 300])
+        manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     combined_df = combine_df(behav_df, neural_df)
     
@@ -1190,7 +1237,7 @@ def main(example_path_data, example_path_results, trial_num, tuning_whole_sessio
     if tuning_whole_session:
         # Calculate and plot statistics
         mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df, example_path_results, trial_num)
-        plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num)
+        plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, tuning_whole_session)
     else:
         seg_threshold = 50
         unique_seg = combined_df['segment'].unique()
