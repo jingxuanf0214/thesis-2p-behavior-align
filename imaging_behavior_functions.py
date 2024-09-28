@@ -23,6 +23,9 @@ from scipy.stats import sem
 import json
 from matplotlib.widgets import Button
 from abc import ABC, abstractmethod
+from scipy import stats
+from scipy.stats import gaussian_kde
+from scipy.signal import find_peaks
 
 def is_notebook():
     try:
@@ -780,52 +783,6 @@ def tuning_curve_1d(behavior_variable, filtered_columns, neural_activity, neuron
 
 
 
-'''def filter_based_on_histogram(behavior_variable, min_freq_threshold):
-    """
-    Filters the behavioral variable data to remove points distant from the main mode,
-    isolated by at least two consecutive bins with very low frequency. Automatically adjusts
-    bins based on the Freedman-Diaconis rule.
-    
-    Parameters:
-    - behavior_variable: Pandas Series, the behavioral variable data.
-    - min_freq_threshold: The minimum frequency (as a proportion of total) to consider a bin as non-negligible.
-    
-    Returns:
-    - Pandas Series, filtered behavioral variable data.
-    """
-    # Calculate bin width using the Freedman-Diaconis rule
-    #IQR = np.subtract(*np.percentile(behavior_variable, [75, 25]))
-    #n = len(behavior_variable)
-    bin_width = 1
-    range_ = np.max(behavior_variable) - np.min(behavior_variable)
-    bins = int(np.round(range_ / bin_width))
-    print(bins)
-    # Compute the histogram with the calculated number of bins
-    counts, bin_edges = np.histogram(behavior_variable, bins=bins)
-    #total_points = n
-    #freqs = counts / total_points  # Frequency of each bin
-    
-    # Identify bins below the frequency threshold
-    low_freq_bins_mask = counts < min_freq_threshold
-    
-    # Find indices where two consecutive bins are below the threshold
-    two_consecutive_low_bins = np.where(np.convolve(low_freq_bins_mask, [1,1], mode='valid') == 2)[0]
-    
-    if two_consecutive_low_bins.size == 0:
-        return behavior_variable  # No such consecutive low bins, return original series
-    
-    # Determine cutoffs
-    mode_bin_index = np.argmax(counts)
-    lower_cutoff_bins = two_consecutive_low_bins[two_consecutive_low_bins < mode_bin_index]
-    upper_cutoff_bins = two_consecutive_low_bins[two_consecutive_low_bins > mode_bin_index]
-    lower_cutoff = bin_edges[0] if lower_cutoff_bins.size == 0 else bin_edges[lower_cutoff_bins.max() + 2]  # +2 to include the low bin
-    upper_cutoff = bin_edges[-1] if upper_cutoff_bins.size == 0 else bin_edges[upper_cutoff_bins.min()]
-    
-    # Filter the behavioral variable
-    filtered_variable = behavior_variable[(behavior_variable >= lower_cutoff) & (behavior_variable <= upper_cutoff)]
-    
-    return filtered_variable'''
-
 def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     """
     Filters the behavioral variable data to remove points distant from the main mode,
@@ -974,66 +931,168 @@ def calculate_theta_g_rho(df, window_size=30, speed_threshold=0.67, cue_jump_tim
     return df
 
 
-'''def segment_path(df, rho_threshold=0.88, speed_threshold=0.67, min_duration_below_rho=1.0, min_inactivity_duration=2, time_column='time'):
-    """
-    Segments the fly's path based on changes in head direction consistency (rho_t).
+def circular_mode(data, bins=360):
+    """Calculate the circular mode of the given data."""
+    #data_rad = np.deg2rad(data)
+    density = gaussian_kde(data)
+    x = np.linspace(0, 2*np.pi, bins)
+    y = density(x)
+    peaks, _ = find_peaks(y)
+    mode_idx = peaks[np.argmax(y[peaks])]
+    return x[mode_idx]
 
+def plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None):
+    """
+    Plot heading tuning for different segments of a time series for multiple neurons.
+    
     Parameters:
-    - df: DataFrame containing 'theta_g', 'rho_t', and 'speed' columns (time series of a trial).
-    - rho_threshold: Threshold for rho_t to indicate a segment change (default 0.88).
-    - speed_threshold: Minimum cumulative speed threshold to consider the fly active (default 0.67 rad/s).
-    - min_duration_below_rho: Minimum time (in seconds) for rho_t to stay below the threshold to count as a segment (default 0.5s).
-    - min_inactivity_duration: Minimum inactivity duration (in seconds) to discard segments (default 2s).
-    - time_column: The name of the time column in the DataFrame.
+    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment'
+    - neural_df: DataFrame containing neural data
+    - unique_seg: List of unique segment numbers to plot
+    - filtered_columns: List of neuron column names to plot
+    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
+    """
+    n_neurons = len(filtered_columns)
+    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
+    
+    # If there's only one neuron, axes will not be an array, so we convert it to a single-element list
+    if n_neurons == 1:
+        axes = [axes]
+    
+    # Define a color cycle for different segments
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
+
+    # Calculate circular mode headings if not provided
+    if unique_mode_headings is None:
+        unique_mode_headings = []
+        for seg in unique_seg:
+            mask = behav_df['segment'] == seg
+            headings = behav_df.loc[mask, 'heading'].values
+            mode_heading = circular_mode(headings)
+            unique_mode_headings.append(mode_heading)
+
+    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
+        # Plot each segment
+        for i, seg in enumerate(unique_seg):
+            mask = behav_df['segment'] == seg
+            ax.scatter(behav_df.loc[mask, 'heading'], neural_df.loc[mask, neuron], 
+                       color=colors[i], alpha=0.1, label=f'Segment {seg}')
+        
+        ax.set_theta_zero_location('N')
+        ax.set_theta_direction(-1)
+        
+        ax.set_title(f"{neuron}")
+        if ax_idx == 0:  # Only set ylabel for the first subplot
+            ax.set_ylabel("Neural Activity")
+        
+        #Plot mode headings
+        for i, mode_hd in enumerate(unique_mode_headings):
+            ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], color=colors[i % len(colors)], 
+                    linewidth=2, linestyle='--', label=f'Mode {i+1}')
+        
+        if ax_idx == n_neurons - 1:  # Only add legend to the last subplot
+            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
+    
+    plt.tight_layout()
+    
+    # Save the figure
+    plt.savefig(f"{example_path_results}scatter_segment_circular_{trial_num}.png", dpi=300, bbox_inches='tight')
+    
+    #plt.show()
+
+# Example usage:
+# filtered_columns = ['MBON09L', 'MBON10L', 'MBON11L']
+# unique_seg = [0, 1, 2]
+# plot_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, unique_mode_headings=[mode_hd, mode_hd2])
+
+
+def binned_stats(headings, values, bins):
+    """
+    Calculate binned averages and standard errors.
+    
+    Parameters:
+    - headings: array of angular data (in radians).
+    - values: corresponding values (e.g., MBON09L) to be averaged.
+    - bins: number of bins or a list of bin edges for angular data.
     
     Returns:
-    - A DataFrame with an added 'segment' column indicating segment labels.
+    - bin_centers: array of bin centers (in radians).
+    - bin_means: array of mean values for each bin.
+    - bin_errors: array of standard errors for each bin.
     """
-    # Initialize segment labels
-    df['segment'] = np.nan
-    segment_id = 0
+    binned, bin_edges = pd.cut(headings, bins=bins, labels=False, retbins=True)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    bin_means = []
+    bin_errors = []
+    for i in range(len(bin_edges) - 1):
+        bin_values = values[binned == i]
+        bin_means.append(np.mean(bin_values))
+        bin_errors.append(np.std(bin_values) / np.sqrt(len(bin_values)))
+
+    return bin_centers, np.array(bin_means), np.array(bin_errors)
+
+def plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, n_bins=16):
+    """
+    Plot binned heading tuning for different segments of a time series for multiple neurons.
     
-    # Time step calculation assuming evenly spaced data (if not provided, you can adjust accordingly)
-    #time_step = df[time_column].diff().median()
+    Parameters:
+    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment'
+    - neural_df: DataFrame containing neural data
+    - unique_seg: List of unique segment numbers to plot
+    - filtered_columns: List of neuron column names to plot
+    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
+    - n_bins: Number of bins for circular data (default 16)
+    """
+    n_neurons = len(filtered_columns)
+    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
     
-    # Segment flag (True if we are within a segment, False otherwise)
-    in_segment = False
-    segment_start_idx = None
-    below_rho_start_idx = None
+    if n_neurons == 1:
+        axes = [axes]
     
-    for i in range(1, len(df)):
-        # Check if we are crossing the rho_t threshold
-        if df['rho_t'].iloc[i] > rho_threshold:
-            # Handle brief dips below the threshold (less than 0.5s)
-            if not in_segment and df[time_column].iloc[i] - df[time_column].iloc[segment_start_idx or 0] >= min_duration_below_rho:
-                in_segment = True
-                segment_start_idx = i
-        else:
-            # If we were in a segment, end it and mark the segment in the DataFrame
-            if in_segment:
-                if below_rho_start_idx is None:
-                        # Start counting time above the threshold
-                        below_rho_start_idx = i
-                elif df[time_column].iloc[i] - df[time_column].iloc[below_rho_start_idx] >= min_duration_below_rho:
-                    in_segment = False
-                    df.loc[segment_start_idx:i, 'segment'] = segment_id
-                    segment_id += 1
-                    below_rho_start_idx = None
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
+    bins = np.linspace(0, 2 * np.pi, n_bins + 1)
+    if unique_mode_headings is None:
+        unique_mode_headings = []
+        for seg in unique_seg:
+            mask = behav_df['segment'] == seg
+            headings = behav_df.loc[mask, 'heading'].values
+            mode_heading = circular_mode(headings)
+            unique_mode_headings.append(mode_heading)
 
-        # Discard segments where rho_t == 1 (indicating the fly did not change head direction)
-        if df['rho_t'].iloc[i] == 1:
-            df.loc[segment_start_idx:i, 'segment'] = np.nan
+    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
+        for i, seg in enumerate(unique_seg):
+            mask = behav_df['segment'] == seg
+            headings = behav_df.loc[mask, 'heading']
+            values = neural_df.loc[mask, neuron]
+            
+            centers, means, errors = binned_stats(headings, values, bins)
+            
+            ax.errorbar(centers, means, yerr=errors, fmt='o-', 
+                        label=f'Segment {seg}', color=colors[i])
+        
+        ax.set_theta_zero_location('N')
+        ax.set_theta_direction(-1)
+        
+        ax.set_title(f"{neuron}")
+        if ax_idx == 0:
+            ax.set_ylabel("Neural Activity")
+        
+        if unique_mode_headings is not None:
+            for i, mode_hd in enumerate(unique_mode_headings):
+                ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], 
+                        color=colors[i], linewidth=2, linestyle='--', 
+                        label=f'Mode {i+1}: {mode_hd:.1f}°')
+        
+        if ax_idx == n_neurons - 1:
+            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
+    
+    plt.tight_layout()
+    
+    plt.savefig(f"{example_path_results}binned_heading_tuning_{trial_num}.png", dpi=300, bbox_inches='tight')
+    
+    plt.show()
 
-        # Discard inactive segments (where speed is below speed_threshold for 2s)
-        inactive_duration = df[(df['speed'] < speed_threshold) & (df['segment'] == segment_id)]
-        if len(inactive_duration) > 0 and inactive_duration[time_column].iloc[-1] - inactive_duration[time_column].iloc[0] >= min_inactivity_duration:
-            df.loc[segment_start_idx:i, 'segment'] = np.nan
-
-    # Final adjustments for handling the last segment
-    if in_segment:
-        df.loc[segment_start_idx:, 'segment'] = segment_id
-
-    return df'''
 
 class PathSegmenter(ABC):
     @abstractmethod
@@ -1242,6 +1301,8 @@ def main(example_path_data, example_path_results, trial_num, tuning_whole_sessio
         seg_threshold = 50
         unique_seg = combined_df['segment'].unique()
         unique_seg = unique_seg[~np.isnan(unique_seg)]
+        plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None)
+        plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None)
         for i in range(len(unique_seg)):
             if np.sum(behav_df['segment'] == unique_seg[i]) > seg_threshold:
                 neural_activity_i = neural_activity[behav_df['segment'] == unique_seg[i]]
