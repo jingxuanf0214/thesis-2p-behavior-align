@@ -1209,9 +1209,9 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON09/"
-example_path_data = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/data/"
-example_path_results = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/DAN_imaging/"
+example_path_data = base_path+"20220628-3_MB441B_GCAMP7f_long/data/"
+example_path_results = base_path+"20220628-3_MB441B_GCAMP7f_long/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1222,7 +1222,7 @@ example_path_results = base_path+"20230728-4_MBON09_GCAMP7f_patchy_strip_fly2/re
 def main(example_path_data, example_path_results, trial_num, tuning_whole_session=False, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
-    roi_kw, roi_kw2 = 'MBON', 'FB'
+    roi_kw, roi_kw2 = 'PAM', 'FB'
     #tuning_whole_session = False
 
     # Load data and preprocess
@@ -1535,5 +1535,5 @@ def loop_folder(base_path, calc_corr=False):
 
     
 #loop_folder(base_path)
-main(example_path_data, example_path_results,1)
+main(example_path_data, example_path_results,2)
 
