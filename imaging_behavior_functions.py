@@ -134,6 +134,54 @@ def plot_interactive_histogram(series):
     
     return threshold_value[0]  # Return the updated list containing the threshold value
 
+
+def calculate_deltaF_over_F_df(df, fluorescence_columns, method='percentile', window_size=100, percentile=8):
+    """
+    Calculate deltaF/F for specified columns in a pandas DataFrame and add new columns with '_dff' appended to the names.
+
+    Args:
+    df (pd.DataFrame): The input DataFrame containing raw fluorescence time series.
+    fluorescence_columns (list): List of column names in the DataFrame representing raw fluorescence signals.
+    method (str): Method for calculating F0 ('median', 'mean', 'sliding_window', 'percentile', 'smooth'). Default is 'percentile'.
+    window_size (int): The size of the sliding window (used for 'sliding_window' and 'percentile' methods). Default is 100.
+    percentile (int): The percentile to use for the baseline calculation in 'percentile' method. Default is 8.
+
+    Returns:
+    pd.DataFrame: The input DataFrame with new columns appended containing deltaF/F values.
+    """
+    df = df.copy()  # To avoid modifying the original DataFrame
+
+    for col in fluorescence_columns:
+        fluorescence_series = df[col].values
+        
+        # Baseline calculation
+        if method == 'median':
+            F0 = np.median(fluorescence_series)
+        elif method == 'mean':
+            F0 = np.mean(fluorescence_series)
+        elif method == 'sliding_window':
+            F0 = np.array([np.mean(fluorescence_series[max(0, i-window_size):i]) for i in range(len(fluorescence_series))])
+        elif method == 'percentile':
+            F0 = np.array([np.percentile(fluorescence_series[max(0, i-window_size):i], percentile) for i in range(len(fluorescence_series))])
+        elif method == 'smooth':
+            F0 = gaussian_filter1d(fluorescence_series, sigma=window_size)
+        else:
+            raise ValueError(f"Method {method} not recognized.")
+        
+        # Calculate deltaF/F
+        deltaF_over_F = (fluorescence_series - F0) / F0
+        
+        # Add new column to the DataFrame with '_dff' appended to the original column name
+        df[col + '_dff'] = deltaF_over_F
+
+    return df
+
+# Example Usage:
+# raw_fluorescence = np.array([...])  # your raw fluorescence time series
+# deltaF_F = calculate_deltaF_over_F(raw_fluorescence, method='percentile', window_size=100, percentile=10)
+# print(deltaF_F)
+
+
 def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9):
     circum = ball_d * np.pi
     df = pd.DataFrame()
@@ -1535,5 +1583,5 @@ def loop_folder(base_path, calc_corr=False):
 
     
 #loop_folder(base_path)
-main(example_path_data, example_path_results,2)
+#main(example_path_data, example_path_results,2)
 
