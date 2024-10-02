@@ -192,7 +192,7 @@ def move_struct_files(pathname1):
 
 # Example usage
 #move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging')
-#move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FB4R_imaging')
+move_struct_files('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/DAN_imaging/PAM12')
 
 def move_odor_folders(pathname1):
     # Define the path for the 'odor_trials' folder
@@ -253,7 +253,7 @@ def process_folders(pathname1):
             shutil.move(folder_path, to_processed_path)
 
 # Example usage
-#process_folders('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging')
+#process_folders('//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/DAN_imaging/PAM12')
 
 
 def delete_matching_folders(pathname1, pathname2):
@@ -416,4 +416,4 @@ def express_lane(base_dir):
         print("No 'todo' folder from which to symlink.")
 
 # Example usage:
-express_lane('/Volumes/Neurobio/wilsonlab/banc/matching/fafb/images/todo/DAN')
+#express_lane('/Volumes/Neurobio/wilsonlab/banc/matching/fafb/images/todo/DAN')

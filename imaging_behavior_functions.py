@@ -1257,9 +1257,9 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/DAN_imaging/"
-example_path_data = base_path+"20220628-3_MB441B_GCAMP7f_long/data/"
-example_path_results = base_path+"20220628-3_MB441B_GCAMP7f_long/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/DAN_imaging/PAM12/"
+example_path_data = base_path+"20211228-5_20211228_MB441B_age1/data/"
+example_path_results = base_path+"20211228-5_20211228_MB441B_age1/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1583,5 +1583,5 @@ def loop_folder(base_path, calc_corr=False):
 
     
 #loop_folder(base_path)
-#main(example_path_data, example_path_results,2)
+main(example_path_data, example_path_results, 1,True)
 
