@@ -165,6 +165,8 @@ def calculate_deltaF_over_F_df(df, fluorescence_columns, method='percentile', wi
             F0 = np.array([np.percentile(fluorescence_series[max(0, i-window_size):i], percentile) for i in range(len(fluorescence_series))])
         elif method == 'smooth':
             F0 = gaussian_filter1d(fluorescence_series, sigma=window_size)
+        elif method == 'whole_session_percentile':
+            F0 = np.percentile(fluorescence_series, percentile)
         else:
             raise ValueError(f"Method {method} not recognized.")
         
@@ -1583,5 +1585,5 @@ def loop_folder(base_path, calc_corr=False):
 
     
 #loop_folder(base_path)
-main(example_path_data, example_path_results, 1,True)
+#main(example_path_data, example_path_results, 1,True)
 
