@@ -831,7 +831,65 @@ def tuning_curve_1d(behavior_variable, filtered_columns, neural_activity, neuron
 #     tuning_curve_1d(behavior_variable, neural_activity, [i], 10, ax=ax)
 # plt.show()
 
+def tuning_heatmap_2d(behavior_var1, behavior_var2, filtered_columns, neural_activity, neurons_to_plot, num_bins, example_path_results, trial_num, ax=None):
+    """
+    Plot a 2D tuning heatmap on the given matplotlib Axes.
 
+    Parameters:
+    - behavior_var1: array-like, the first behavioral variable to bin (x-axis).
+    - behavior_var2: array-like, the second behavioral variable to bin (y-axis).
+    - filtered_columns: list of str, names of the neurons.
+    - neural_activity: 2D array-like, neural activity data with shape (neurons, observations).
+    - neuron_to_plot: int, index of the neuron to plot.
+    - num_bins: int, number of bins to divide each behavior variable into.
+    - ax: matplotlib.axes.Axes, the axes object to plot on. If None, a new figure is created.
+
+    Returns:
+    - fig: matplotlib.figure.Figure, the figure object containing the plot.
+    - ax: matplotlib.axes.Axes, the axes object containing the plot.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 8))
+    else:
+        fig = ax.figure
+
+    # Bin the behavioral variables
+    bins1 = np.linspace(np.min(behavior_var1), np.max(behavior_var1), num_bins+1)
+    bins2 = np.linspace(np.min(behavior_var2), np.max(behavior_var2), num_bins+1)
+    
+    # Create a 2D array to store binned activity
+    binned_activity = np.zeros((num_bins, num_bins))
+    
+    # Bin the data and calculate mean activity
+    for i in range(num_bins):
+        for j in range(num_bins):
+            indices = np.where(
+                (behavior_var1 >= bins1[i]) & (behavior_var1 < bins1[i+1]) &
+                (behavior_var2 >= bins2[j]) & (behavior_var2 < bins2[j+1])
+            )[0]
+            binned_activity[j, i] = np.mean(neural_activity[neurons_to_plot, indices])
+    
+    # Create the heatmap
+    im = ax.imshow(binned_activity, origin='lower', aspect='auto', cmap='viridis')
+    
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label(f'Mean activity of {filtered_columns[neurons_to_plot]}')
+    
+    # Set labels and title
+    ax.set_xlabel(behavior_var1.name)
+    ax.set_ylabel(behavior_var2.name)
+    #ax.set_title(f'2D Tuning Heatmap for {filtered_columns[neuron_to_plot]}')
+    
+    # Set tick labels
+    ax.set_xticks(np.linspace(0, num_bins-1, 5))
+    ax.set_yticks(np.linspace(0, num_bins-1, 5))
+    ax.set_xticklabels([f'{x:.2f}' for x in np.linspace(np.min(behavior_var1), np.max(behavior_var1), 5)])
+    ax.set_yticklabels([f'{y:.2f}' for y in np.linspace(np.min(behavior_var2), np.max(behavior_var2), 5)])
+    save_path = f"{example_path_results}fwv_heading_heatmap_{trial_num}.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    #print(f"Figure saved to {save_path}")
+    return fig, ax
 
 def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     """
@@ -915,6 +973,8 @@ def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_
     else: 
         plt.savefig(f"{example_path_results}scatterplot_{trial_num}_segment_{segment_id}.png")
     plt.close()
+
+    # forwardV vs.heading heatmap
 
 
     # plot forwardV vs. heading as sanity check
@@ -1054,6 +1114,7 @@ def plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_colum
 # filtered_columns = ['MBON09L', 'MBON10L', 'MBON11L']
 # unique_seg = [0, 1, 2]
 # plot_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, unique_mode_headings=[mode_hd, mode_hd2])
+
 
 
 def binned_stats(headings, values, bins):
@@ -1259,9 +1320,9 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/DAN_imaging/PAM12/"
-example_path_data = base_path+"20220217-2_MB441B_GCAMP7f/data/"
-example_path_results = base_path+"20220217-2_MB441B_GCAMP7f/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON21/"
+example_path_data = base_path+"20230831-4_MBON09_GCAMP7f_apple_prob_sigmoid/data/"
+example_path_results = base_path+"20230831-4_MBON09_GCAMP7f_apple_prob_sigmoid/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1272,7 +1333,7 @@ example_path_results = base_path+"20220217-2_MB441B_GCAMP7f/results/"
 def main(example_path_data, example_path_results, trial_num, tuning_whole_session=False, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
-    roi_kw, roi_kw2 = 'PAM', 'FB'
+    roi_kw, roi_kw2 = 'MBON', 'FB'
     #tuning_whole_session = False
 
     # Load data and preprocess
@@ -1340,13 +1401,14 @@ def main(example_path_data, example_path_results, trial_num, tuning_whole_sessio
         neural_activity = neural_df[filtered_columns]
 
     # Plot tuning curve and scatter plots
-    num_bins = 10
+    num_bins = 20
     neurons_to_plot = range(neural_activity.shape[1])
     # not segment
     if tuning_whole_session:
         # Calculate and plot statistics
         mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df, example_path_results, trial_num)
-        plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, tuning_whole_session)
+        fig, ax = tuning_heatmap_2d(behavioral_variables[3], behavioral_variables[0], filtered_columns, np.array(neural_activity.T), neurons_to_plot[0], num_bins, example_path_results, trial_num, ax=None)
+        #plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, tuning_whole_session)
     else:
         seg_threshold = 50
         unique_seg = combined_df['segment'].unique()
@@ -1538,7 +1600,7 @@ def loop_trial(example_path_data, example_path_results, corr_dict=None, hdf5_fil
     print(f"Qualified trial numbers are {qualified_trials}")
     
     for trial_num in qualified_trials:
-        main(example_path_data, example_path_results, trial_num)
+        main(example_path_data, example_path_results, trial_num, True)
         
         # Optionally calculate correlation
         if calc_corr and corr_dict is not None:
@@ -1584,6 +1646,6 @@ def loop_folder(base_path, calc_corr=False):
             json.dump(corr_dict, file)
 
     
-#loop_folder(base_path)
-main(example_path_data, example_path_results, 1,True)
+loop_folder(base_path)
+#main(example_path_data, example_path_results, 1,True)
 
