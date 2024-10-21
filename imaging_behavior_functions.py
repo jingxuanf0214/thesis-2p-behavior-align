@@ -39,6 +39,167 @@ def is_notebook():
 
     return True
 
+# load mat data new
+
+def extract_struct_fields(struct, prefix=""):
+    """
+    Recursively extract fields from a MATLAB struct, including nested structs.
+
+    Args:
+    struct (dict): The MATLAB struct or sub-struct to extract.
+    prefix (str): The prefix for the field names (used for nested fields).
+    
+    Returns:
+    dict: A flat dictionary with keys as 'prefix_field' and values as the field data.
+    """
+    data = {}
+    
+    for field_name, field_value in struct.items():
+        # Create a new key name for this field
+        new_key = f"{prefix}_{field_name}" if prefix else field_name
+
+        if isinstance(field_value, dict):
+            # If the field is a struct (dict), recursively extract its fields
+            nested_data = extract_struct_fields(field_value, new_key)
+            data.update(nested_data)
+        else:
+            # Otherwise, it's a regular field, so add it to the data dictionary
+            data[new_key] = field_value
+    
+    return data
+
+def search_for_neural_data(field_data):
+    """
+    Recursively search for 'rawf_f_f_n' and fields containing 'dff' in the nested structure.
+    
+    Args:
+    field_data (dict): A dictionary-like structure representing a MATLAB struct.
+    
+    Returns:
+    tuple: Two dictionaries, one for 'rawf_f_f_n' data and one for 'dff' data, or None if not found.
+    """
+    rawf_data = None
+    dff_data = {}
+    
+    # Base case: If rawf_f_f_n is in the current struct
+    if 'rawf_f_f_n' in field_data:
+        rawf_data = field_data['rawf_f_f_n']
+    
+    # Search for fields containing 'dff'
+    for key, value in field_data.items():
+        if isinstance(value, np.ndarray) and 'dff' in key.lower():
+            dff_data[key] = value
+    
+    # If we found both rawf and dff data, return them
+    if rawf_data is not None or dff_data:
+        return rawf_data, dff_data
+    
+    # Recursively search in nested structs
+    for key, value in field_data.items():
+        if isinstance(value, dict):
+            result = search_for_neural_data(value)
+            if result is not None:
+                return result
+    
+    return None
+
+def process_resp_to_neural_df(ts_resp):
+    """
+    Process the ts.resp structure to extract raw fluorescence data (rawf_f_f_n) from nested structs.
+    
+    Args:
+    ts_resp (dict): The ts.resp structure as a nested dictionary.
+    
+    Returns:
+    pd.DataFrame: A DataFrame containing the extracted neural data with appropriate column names.
+    """
+    neural_data = {}
+    
+    # Loop through the first-level fields in ts_resp (e.g., 'mbon09')
+    for field_name, field_data in ts_resp.items():
+        # Search for the 'rawf_f_f_n' field in nested structs
+        result = search_for_neural_data(field_data)
+        
+        # If data is found, process it
+        if result is not None:
+            raw_f_data, dff_data = result
+            
+            # Process rawf_f_f_n data
+            if raw_f_data is not None:
+                if raw_f_data.ndim == 1:
+                    # If raw_f_data is 1-dimensional
+                    neural_data[f"{field_name}_rawf1"] = raw_f_data
+                else:
+                    for i in range(raw_f_data.shape[0]):
+                        column_name = f"{field_name}_rawf{i+1}"
+                        neural_data[column_name] = raw_f_data[i, :]
+            
+            # Process dff data
+            for dff_key, dff_value in dff_data.items():
+                if dff_value.ndim == 1:
+                    neural_data[f"{field_name}_dff1"] = dff_value
+                else:
+                    for i in range(dff_value.shape[0]):
+                        column_name = f"{field_name}_dff{i+1}"
+                        neural_data[column_name] = dff_value[i, :]
+    
+    # Convert the dictionary to a pandas DataFrame
+    neural_df = pd.DataFrame(neural_data)
+    
+    return neural_df
+
+
+def load_matfile_to_df(example_path_data, trial_num):
+    """
+    Load a MATLAB v7.3 .mat file using the mat73 library and extract struct variables into a pandas DataFrame.
+    
+    Args:
+    matfile_path (str): Path to the .mat file.
+    
+    Returns:
+    pd.DataFrame: A DataFrame with extracted fields from the MATLAB struct.
+    """
+    # Load the .mat file
+    mat_data = mat73.loadmat(example_path_data+'ts_trial'+str(trial_num)+'.mat')
+
+    # Extract the 'ts' struct from the loaded data
+    ts = mat_data['ts']
+    
+    # Dictionary to store all extracted data
+    data = {}
+
+    # List of relevant sub-structs, including 'resp'
+    sub_structs = ['flypos', 'ball', 'vis', 'resp']
+    
+    # Loop over each sub-struct and extract its fields
+    for sub_struct_name in sub_structs:
+        if sub_struct_name in ts:
+            sub_struct = ts[sub_struct_name]
+            #print(sub_struct)
+            # Special case for 'resp' sub-struct
+            if sub_struct_name == 'resp':
+                neural_df = process_resp_to_neural_df(sub_struct)
+                #print(neural_df)
+                # Add the neural data columns to the main data dictionary
+                #for col in neural_df.columns:
+                    #data[col] = neural_df[col]
+            else:
+                # Use the recursive function to extract all other fields
+                sub_struct_data = extract_struct_fields(sub_struct, sub_struct_name)
+                # Update the main data dictionary
+                data.update(sub_struct_data)
+
+    # Convert the dictionary into a pandas DataFrame
+    behav_df = pd.DataFrame(data)
+    # Add 'ti' (time) to both df and neural_df
+    if 'ti' in ts:
+        time = ts['ti']
+        behav_df['time'] = time  # Add time to df
+        neural_df['time'] = time  # Add time to neural_df as well
+    
+    return behav_df, neural_df
+
+
 def load_roiData_struct(path_to_folder):
     # Construct the search pattern for files containing 'roiData_struct'
     search_pattern = path_to_folder + '/*roiData_struct*.mat'
@@ -110,6 +271,19 @@ def load_intermediate_mat(path_to_folder,trial_num):
     roi_data = load_roiData_struct(path_to_folder)
     roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['convertedStruct'],axis=1))
     return is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor
+
+def load_intermediate_mat_new(path_to_folder,trial_num):
+    is_mat73 = 0
+    try:
+        dff_raw = scipy.io.loadmat(path_to_folder + f'dff_raw_trial{trial_num}.mat')
+    except NotImplementedError as e:
+        # If scipy.io.loadmat fails due to version incompatibility, try with mat73.loadmat
+        print(f"Loading with scipy.io failed: {e}. Trying with mat73.")
+        is_mat73 = 1
+        dff_raw = mat73.loadmat(path_to_folder + f'dff_raw_trial{trial_num}.mat')
+    roi_data = load_roiData_struct(path_to_folder)
+    roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['convertedStruct'],axis=1))
+    return is_mat73, roi_df, dff_raw
 
 def plot_interactive_histogram(series):
     fig, ax = plt.subplots()
