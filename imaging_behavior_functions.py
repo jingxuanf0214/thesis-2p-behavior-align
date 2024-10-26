@@ -199,6 +199,7 @@ def load_matfile_to_df(example_path_data, trial_num):
     if 'odor' in ts:
         odor = ts['odor']
         behav_df['odor'] = odor  # Add time to df
+        behav_df['odor_state'] = behav_df['odor']>-1.5
     return behav_df, neural_df
 
 def rename_dataframe(df):
@@ -693,9 +694,6 @@ def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, 
 #def combine_df(behav_df, neural_df):
     #return pd.merge(behav_df,neural_df,on="time")
 
-import pandas as pd
-
-import pandas as pd
 
 def combine_df(behav_df, neural_df, tolerance=0.05):
     # Ensure both time columns are of the same type (e.g., float64)
@@ -1706,26 +1704,69 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 
 
 
-def label_block(df, block_length):
+def label_blocks(df, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
     """
-    Adds a 'block' column to the dataframe that divides the time series into blocks.
+    Label blocks in a DataFrame based on odor onset and heading direction criteria.
     
     Parameters:
-    df (pd.DataFrame): The dataframe containing the 'time' column.
-    block_length (float): The length of each block in the same units as the 'time' column.
-    
+    -----------
+    df : pandas.DataFrame
+        DataFrame containing 'odor_onset' and 'heading' columns
+    start_dir_1, end_dir_1 : float
+        Start and end directions (in radians) for block 1
+    start_dir_2, end_dir_2 : float
+        Start and end directions (in radians) for block 2
+        
     Returns:
-    pd.DataFrame: The dataframe with an added 'block' column.
+    --------
+    pandas.DataFrame
+        Original DataFrame with new 'block' column
     """
+    #print(start_dir_1)
+    # Create a copy of the DataFrame to avoid modifying the original
+    df_copy = df.copy()
     
-    # Ensure the DataFrame contains the 'time' column
-    if 'time' not in df.columns:
-        raise ValueError("The DataFrame must contain a 'time' column.")
+    # Initialize block column with zeros
+    df_copy['block'] = 0
     
-    # Divide the time values by block_length and floor the result to assign block numbers
-    df['block'] = (df['time'] // block_length).astype(int)
+    # Find indices where odor_onset is True
+    onset_indices = df_copy.index[df_copy['odor']>-1.5].tolist()
     
-    return df
+    if not onset_indices:
+        return df_copy
+    
+    # Initialize variables
+    current_block = 0
+    block_2_started = False
+    
+    # Get first odor onset index
+    first_onset = onset_indices[0]
+    
+    # Label everything from first onset to end as block 1 initially
+    df_copy.loc[first_onset:, 'block'] = 1
+    current_block = 1
+    
+    # Check each odor onset
+    for onset_idx in onset_indices:
+        heading = df_copy.loc[onset_idx, 'heading']
+        
+        if current_block == 1:
+            # Check if heading is within block 1 range
+            #print(start_dir_1)
+            in_block_1 = start_dir_1 <= heading <= end_dir_1
+            
+            # Check if heading is within block 2 range
+            in_block_2 = start_dir_2 <= heading <= end_dir_2
+            
+            if in_block_2 and not block_2_started:
+                # Start block 2
+                df_copy.loc[onset_idx:, 'block'] = 2
+                current_block = 2
+                block_2_started = True
+                
+        # If we're already in block 2, keep labeling as block 2
+    
+    return df_copy
 
 # Example usage:
 # mean_angle, median_angle, mode_angle, behavioral_vars, filtered_vars = process_behavioral_variables(behav_df, example_path_results, trial_num)
@@ -1736,8 +1777,8 @@ def label_block(df, block_length):
 # calcium imaging GLM 
 
 base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-example_path_data = base_path+"20241016-5_MBON09_closed_loop_odor/data/"
-example_path_results = base_path+"20241016-5_MBON09_closed_loop_odor/results/"
+example_path_data = base_path+"20241016-4_MBON09_closed_loop_odor/data/"
+example_path_results = base_path+"20241016-4_MBON09_closed_loop_odor/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1853,7 +1894,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
     behav_df = make_df_behavior_new(behav_df)
     xPos, yPos = reconstruct_path(behav_df, ball_d=9)
     #plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
-    clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
+    clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor_state', example_path_results, trial_num)
     print("Indices of clicked points:", clicked_indices)
     # Load and validate ROI data
     roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
@@ -1884,7 +1925,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     elif segment_by_block:
-        behav_df = label_block(behav_df, 150)
+        behav_df = label_blocks(behav_df, 150)
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -1951,7 +1992,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-main_new(example_path_data, example_path_results,1,False, False)
+main_new(example_path_data, example_path_results,1,False, True)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
