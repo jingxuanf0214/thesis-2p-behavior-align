@@ -1148,7 +1148,7 @@ def tuning_heatmap_2d(behavior_var1, behavior_var2, filtered_columns, neural_act
     ax.set_yticks(np.linspace(0, num_bins-1, 5))
     ax.set_xticklabels([f'{x:.2f}' for x in np.linspace(np.min(behavior_var1), np.max(behavior_var1), 5)])
     ax.set_yticklabels([f'{y:.2f}' for y in np.linspace(np.min(behavior_var2), np.max(behavior_var2), 5)])
-    save_path = f"{example_path_results}fwv_heading_heatmap_{trial_num}.png"
+    save_path = f"{example_path_results}_{behavior_var1.name}_{behavior_var2.name}_heatmap_{trial_num}.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     #print(f"Figure saved to {save_path}")
     return fig, ax
@@ -1469,67 +1469,6 @@ def binned_stats(headings, values, bins):
 
     return bin_centers, np.array(bin_means), np.array(bin_errors)
 
-'''def plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, n_bins=16):
-    """
-    Plot binned heading tuning for different segments of a time series for multiple neurons.
-    
-    Parameters:
-    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment'
-    - neural_df: DataFrame containing neural data
-    - unique_seg: List of unique segment numbers to plot
-    - filtered_columns: List of neuron column names to plot
-    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
-    - n_bins: Number of bins for circular data (default 16)
-    """
-    n_neurons = len(filtered_columns)
-    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
-    
-    if n_neurons == 1:
-        axes = [axes]
-    
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
-    bins = np.linspace(0, 2 * np.pi, n_bins + 1)
-    if unique_mode_headings is None:
-        unique_mode_headings = []
-        for seg in unique_seg:
-            mask = behav_df['segment'] == seg
-            headings = behav_df.loc[mask, 'heading'].values
-            mode_heading = circular_mode(headings)
-            unique_mode_headings.append(mode_heading)
-
-    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
-        for i, seg in enumerate(unique_seg):
-            mask = behav_df['segment'] == seg
-            headings = behav_df.loc[mask, 'heading']
-            values = neural_df.loc[mask, neuron]
-            
-            centers, means, errors = binned_stats(headings, values, bins)
-            
-            ax.errorbar(centers, means, yerr=errors, fmt='o-', 
-                        label=f'Segment {seg}', color=colors[i])
-        
-        ax.set_theta_zero_location('N')
-        ax.set_theta_direction(-1)
-        
-        ax.set_title(f"{neuron}")
-        if ax_idx == 0:
-            ax.set_ylabel("Neural Activity")
-        
-        if unique_mode_headings is not None:
-            for i, mode_hd in enumerate(unique_mode_headings):
-                ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], 
-                        color=colors[i], linewidth=2, linestyle='--', 
-                        label=f'Mode {i+1}: {mode_hd:.1f}°')
-        
-        if ax_idx == n_neurons - 1:
-            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
-    
-    plt.tight_layout()
-    
-    plt.savefig(f"{example_path_results}binned_heading_tuning_{trial_num}.png", dpi=300, bbox_inches='tight')
-    
-    plt.show()'''
-
 
 
 def plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, n_bins=16, segment_column='block'):
@@ -1704,14 +1643,17 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 
 
 
-def label_blocks(df, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
+def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
     """
-    Label blocks in a DataFrame based on odor onset and heading direction criteria.
+    Label blocks in a DataFrame based on odor onset, heading direction criteria,
+    and an initial time before which any odor onsets are ignored for starting block 2.
     
     Parameters:
     -----------
     df : pandas.DataFrame
-        DataFrame containing 'odor_onset' and 'heading' columns
+        DataFrame containing 'odor', 'heading', and 'time' columns
+    initial_t : float
+        Time before which any odor onsets should be ignored for starting block 2
     start_dir_1, end_dir_1 : float
         Start and end directions (in radians) for block 1
     start_dir_2, end_dir_2 : float
@@ -1722,15 +1664,14 @@ def label_blocks(df, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.
     pandas.DataFrame
         Original DataFrame with new 'block' column
     """
-    #print(start_dir_1)
     # Create a copy of the DataFrame to avoid modifying the original
     df_copy = df.copy()
     
     # Initialize block column with zeros
     df_copy['block'] = 0
     
-    # Find indices where odor_onset is True
-    onset_indices = df_copy.index[df_copy['odor']>-1.5].tolist()
+    # Find indices where odor_onset is True and time is after initial_t
+    onset_indices = df_copy.index[(df_copy['odor'] > -1.5) & (df_copy['time'] > initial_t)].tolist()
     
     if not onset_indices:
         return df_copy
@@ -1749,16 +1690,17 @@ def label_blocks(df, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.
     # Check each odor onset
     for onset_idx in onset_indices:
         heading = df_copy.loc[onset_idx, 'heading']
+        odor_on = df_copy.loc[onset_idx, 'odor'] > -1.5  # Assuming odor is on when this condition is true
         
         if current_block == 1:
-            # Check if heading is within block 1 range
-            #print(start_dir_1)
-            in_block_1 = start_dir_1 <= heading <= end_dir_1
+            # Condition 1: Heading is within block 1 range and odor is OFF
+            in_block_1 = start_dir_1 <= heading <= end_dir_1 and not odor_on
             
-            # Check if heading is within block 2 range
-            in_block_2 = start_dir_2 <= heading <= end_dir_2
+            # Condition 2: Heading is within block 2 range and odor is ON
+            in_block_2 = start_dir_2 <= heading <= end_dir_2 and odor_on
             
-            if in_block_2 and not block_2_started:
+            # Switch to block 2 if either condition is met
+            if (in_block_1 or in_block_2) and not block_2_started:
                 # Start block 2
                 df_copy.loc[onset_idx:, 'block'] = 2
                 current_block = 2
@@ -1768,17 +1710,15 @@ def label_blocks(df, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.
     
     return df_copy
 
-# Example usage:
-# mean_angle, median_angle, mode_angle, behavioral_vars, filtered_vars = process_behavioral_variables(behav_df, example_path_results, trial_num)
 
 
 
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-example_path_data = base_path+"20241016-4_MBON09_closed_loop_odor/data/"
-example_path_results = base_path+"20241016-4_MBON09_closed_loop_odor/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON21/"
+example_path_data = base_path+"20241023-2_MBON21_blocks/data/"
+example_path_results = base_path+"20241023-2_MBON21_blocks/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1786,7 +1726,7 @@ example_path_results = base_path+"20241016-4_MBON09_closed_loop_odor/results/"
 #print(roi_df.head(10))
     
 
-def main(example_path_data, example_path_results, trial_num, tuning_whole_session=False, segment_method='manual'):
+def main(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
     roi_kw, roi_kw2 = 'MBON', 'FB'
@@ -1823,10 +1763,12 @@ def main(example_path_data, example_path_results, trial_num, tuning_whole_sessio
     # Create neural dataframe and combine with behavioral data
     neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
     behav_df = calculate_theta_g_rho(behav_df)
-    if not tuning_whole_session:
+    if segment_by_dir:
         factory = PathSegmentationFactory()
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
+    elif segment_by_block:
+        behav_df = label_blocks(behav_df)
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -1860,33 +1802,47 @@ def main(example_path_data, example_path_results, trial_num, tuning_whole_sessio
     num_bins = 20
     neurons_to_plot = range(neural_activity.shape[1])
     # not segment
-    if tuning_whole_session:
-        # Calculate and plot statistics
-        mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df, example_path_results, trial_num)
-        fig, ax = tuning_heatmap_2d(behavioral_variables[3], behavioral_variables[0], filtered_columns, np.array(neural_activity.T), neurons_to_plot[0], num_bins, example_path_results, trial_num, ax=None)
-        #plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, tuning_whole_session)
-    else:
+    if segment_by_dir:
         seg_threshold = 50
         unique_seg = combined_df['segment'].unique()
         unique_seg = unique_seg[~np.isnan(unique_seg)]
-        plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None)
-        plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None)
+        plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, segment_column='segment')
+        plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, segment_column='segment')
         for i in range(len(unique_seg)):
             if np.sum(behav_df['segment'] == unique_seg[i]) > seg_threshold:
                 neural_activity_i = neural_activity[behav_df['segment'] == unique_seg[i]]
                 behav_df_i = behav_df[behav_df['segment'] == unique_seg[i]]
                 mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df_i, example_path_results, trial_num)
-                plot_tuning_curve_and_scatter(np.array(neural_activity_i.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, tuning_whole_session, unique_seg[i])
+                plot_tuning_curve_and_scatter(np.array(neural_activity_i.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, segment_by_dir, segment_by_block, unique_seg[i])
+
+    elif segment_by_block:
+        clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'block', example_path_results, trial_num)
+        unique_block = combined_df['block'].unique()
+        unique_block = unique_block[~np.isnan(unique_block)]
+        plot_heading_tuning_circular(behav_df, neural_df, unique_block, filtered_columns, example_path_results, trial_num)
+        plot_binned_heading_tuning(behav_df, neural_df, unique_block, filtered_columns, example_path_results, trial_num)
+        for i in range(len(unique_block)):
+            neural_activity_i = neural_activity[behav_df['block'] == unique_block[i]]
+            behav_df_i = behav_df[behav_df['block'] == unique_block[i]]
+            mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df_i, example_path_results, trial_num)
+            plot_tuning_curve_and_scatter(np.array(neural_activity_i.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num,segment_by_dir, segment_by_block, unique_block[i])
+
+    else:
+        # Calculate and plot statistics
+        mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df, example_path_results, trial_num)
+        fig, ax = tuning_heatmap_2d(behavioral_variables[3], behavioral_variables[2], filtered_columns, np.array(neural_activity.T), neurons_to_plot[0], num_bins, example_path_results, trial_num, ax=None)
+        #plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, segment_by_dir, segment_by_block)
+
+#main(example_path_data, example_path_results, 1,False,False)
 
 
-def main_new(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, segment_method='manual'):
+def main_new(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, caiman_only, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
     roi_kw, roi_kw2 = 'MBON', 'FB'
     #tuning_whole_session = False
 
     # Load data and preprocess
-    is_mat73, roi_df, dff_raw = load_intermediate_mat_new(example_path_data,trial_num)
     #is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data, trial_num)
     behav_df, neural_df_new = load_matfile_to_df(example_path_data, trial_num)
     behav_df = rename_dataframe(behav_df)
@@ -1897,35 +1853,39 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
     clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor_state', example_path_results, trial_num)
     print("Indices of clicked points:", clicked_indices)
     # Load and validate ROI data
-    roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
-    dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
-    
-    if len(dff_all_rois) < len(hdeltab_index):
-        print("raw df/f matrix dimension doesn't align with ROI names")
-        return
-    
-    # Handle special cases
-    special_cases = {
-        "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/": [0, 2, 3],
-        "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/": 'hDeltaB',
-        "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/20220720-3_hDeltaB_GCAMP7f_long/data/": 'hDealtaB'
-    }
-    if example_path_data in special_cases:
-        case = special_cases[example_path_data]
-        if isinstance(case, list):
-            dff_all_rois = dff_all_rois[case, :]
-        else:
-            roi_kw = case
+    if caiman_only:
+        neural_df = neural_df_new
+    else:
+        is_mat73, roi_df, dff_raw = load_intermediate_mat_new(example_path_data,trial_num)
+        roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
+        dff_all_rois, dff_time = load_dff_raw(is_mat73, dff_raw)
+        
+        if len(dff_all_rois) < len(hdeltab_index):
+            print("raw df/f matrix dimension doesn't align with ROI names")
+            return
+        
+        # Handle special cases
+        special_cases = {
+            "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/": [0, 2, 3],
+            "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/": 'hDeltaB',
+            "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/hDeltaB_imaging/qualified_sessions/20220720-3_hDeltaB_GCAMP7f_long/data/": 'hDealtaB'
+        }
+        if example_path_data in special_cases:
+            case = special_cases[example_path_data]
+            if isinstance(case, list):
+                dff_all_rois = dff_all_rois[case, :]
+            else:
+                roi_kw = case
 
-    # Create neural dataframe and combine with behavioral data
-    neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
+        # Create neural dataframe and combine with behavioral data
+        neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
     behav_df = calculate_theta_g_rho(behav_df)
     if segment_by_dir:
         factory = PathSegmentationFactory()
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     elif segment_by_block:
-        behav_df = label_blocks(behav_df, 150)
+        behav_df = label_blocks(behav_df,50)
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -1992,7 +1952,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-main_new(example_path_data, example_path_results,1,False, True)
+main_new(example_path_data, example_path_results,3,False, True,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
@@ -2122,7 +2082,7 @@ def loop_trial(example_path_data, example_path_results, corr_dict=None, hdf5_fil
     print(f"Qualified trial numbers are {qualified_trials}")
     
     for trial_num in qualified_trials:
-        main(example_path_data, example_path_results, trial_num, True)
+        main(example_path_data, example_path_results, trial_num, False, False)
         
         # Optionally calculate correlation
         if calc_corr and corr_dict is not None:
