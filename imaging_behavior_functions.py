@@ -1317,64 +1317,7 @@ def circular_mode(data, bins=360):
     mode_idx = peaks[np.argmax(y[peaks])]
     return x[mode_idx]
 
-'''def plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None):
-    """
-    Plot heading tuning for different segments of a time series for multiple neurons.
-    
-    Parameters:
-    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment'
-    - neural_df: DataFrame containing neural data
-    - unique_seg: List of unique segment numbers to plot
-    - filtered_columns: List of neuron column names to plot
-    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
-    """
-    n_neurons = len(filtered_columns)
-    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
-    
-    # If there's only one neuron, axes will not be an array, so we convert it to a single-element list
-    if n_neurons == 1:
-        axes = [axes]
-    
-    # Define a color cycle for different segments
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
 
-    # Calculate circular mode headings if not provided
-    if unique_mode_headings is None:
-        unique_mode_headings = []
-        for seg in unique_seg:
-            mask = behav_df['segment'] == seg
-            headings = behav_df.loc[mask, 'heading'].values
-            mode_heading = circular_mode(headings)
-            unique_mode_headings.append(mode_heading)
-
-    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
-        # Plot each segment
-        for i, seg in enumerate(unique_seg):
-            mask = behav_df['segment'] == seg
-            ax.scatter(behav_df.loc[mask, 'heading'], neural_df.loc[mask, neuron], 
-                       color=colors[i], alpha=0.1, label=f'Segment {seg}')
-        
-        ax.set_theta_zero_location('N')
-        ax.set_theta_direction(-1)
-        
-        ax.set_title(f"{neuron}")
-        if ax_idx == 0:  # Only set ylabel for the first subplot
-            ax.set_ylabel("Neural Activity")
-        
-        #Plot mode headings
-        for i, mode_hd in enumerate(unique_mode_headings):
-            ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], color=colors[i % len(colors)], 
-                    linewidth=2, linestyle='--', label=f'Mode {i+1}')
-        
-        if ax_idx == n_neurons - 1:  # Only add legend to the last subplot
-            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
-    
-    plt.tight_layout()
-    
-    # Save the figure
-    plt.savefig(f"{example_path_results}scatter_segment_circular_{trial_num}.png", dpi=300, bbox_inches='tight')
-    
-    #plt.show()'''
 
 
 def plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, segment_column='block'):
@@ -1646,7 +1589,7 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
     """
     Label blocks in a DataFrame based on odor onset, heading direction criteria,
-    and an initial time before which any odor onsets are ignored for starting block 2.
+    and return block boundary indices.
     
     Parameters:
     -----------
@@ -1661,8 +1604,9 @@ def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_
         
     Returns:
     --------
-    pandas.DataFrame
-        Original DataFrame with new 'block' column
+    tuple
+        (DataFrame with new 'block' column, list of block boundary indices)
+        Block boundary indices are [start_block1, start_block2] or [start_block1] if block 2 never starts
     """
     # Create a copy of the DataFrame to avoid modifying the original
     df_copy = df.copy()
@@ -1670,11 +1614,14 @@ def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_
     # Initialize block column with zeros
     df_copy['block'] = 0
     
+    # Initialize boundary indices list
+    block_boundaries = []
+    
     # Find indices where odor_onset is True and time is after initial_t
     onset_indices = df_copy.index[(df_copy['odor'] > -1.5) & (df_copy['time'] > initial_t)].tolist()
     
     if not onset_indices:
-        return df_copy
+        return df_copy, block_boundaries
     
     # Initialize variables
     current_block = 0
@@ -1687,10 +1634,13 @@ def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_
     df_copy.loc[first_onset:, 'block'] = 1
     current_block = 1
     
+    # Add first block boundary
+    block_boundaries.append(first_onset)
+    
     # Check each odor onset
     for onset_idx in onset_indices:
         heading = df_copy.loc[onset_idx, 'heading']
-        odor_on = df_copy.loc[onset_idx, 'odor'] > -1.5  # Assuming odor is on when this condition is true
+        odor_on = df_copy.loc[onset_idx, 'odor'] > -1.5
         
         if current_block == 1:
             # Condition 1: Heading is within block 1 range and odor is OFF
@@ -1705,10 +1655,10 @@ def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_
                 df_copy.loc[onset_idx:, 'block'] = 2
                 current_block = 2
                 block_2_started = True
-                
-        # If we're already in block 2, keep labeling as block 2
+                # Add block 2 boundary
+                block_boundaries.append(onset_idx)
     
-    return df_copy
+    return df_copy, block_boundaries
 
 
 
@@ -1716,9 +1666,9 @@ def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON21/"
-example_path_data = base_path+"20241023-2_MBON21_blocks/data/"
-example_path_results = base_path+"20241023-2_MBON21_blocks/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
+example_path_data = base_path+"20241101-1_MBON09_blocks/data/"
+example_path_results = base_path+"20241101-1_MBON09_blocks/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1885,7 +1835,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     elif segment_by_block:
-        behav_df = label_blocks(behav_df,50)
+        behav_df, block_boundaries = label_blocks(behav_df,50)
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -1952,7 +1902,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-main_new(example_path_data, example_path_results,3,False, True,False)
+#main_new(example_path_data, example_path_results,4,False, True,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
