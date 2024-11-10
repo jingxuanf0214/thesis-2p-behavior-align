@@ -1585,81 +1585,6 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
     return mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables
 
 
-
-'''def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
-    """
-    Label blocks in a DataFrame based on odor onset, heading direction criteria,
-    and return block boundary indices.
-    
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame containing 'odor', 'heading', and 'time' columns
-    initial_t : float
-        Time before which any odor onsets should be ignored for starting block 2
-    start_dir_1, end_dir_1 : float
-        Start and end directions (in radians) for block 1
-    start_dir_2, end_dir_2 : float
-        Start and end directions (in radians) for block 2
-        
-    Returns:
-    --------
-    tuple
-        (DataFrame with new 'block' column, list of block boundary indices)
-        Block boundary indices are [start_block1, start_block2] or [start_block1] if block 2 never starts
-    """
-    # Create a copy of the DataFrame to avoid modifying the original
-    df_copy = df.copy()
-    
-    # Initialize block column with zeros
-    df_copy['block'] = 0
-    
-    # Initialize boundary indices list
-    block_boundaries = []
-    
-    # Find indices where odor_onset is True and time is after initial_t
-    onset_indices = df_copy.index[(df_copy['odor'] > -1.5) & (df_copy['time'] > initial_t)].tolist()
-    
-    if not onset_indices:
-        return df_copy, block_boundaries
-    
-    # Initialize variables
-    current_block = 0
-    block_2_started = False
-    
-    # Get first odor onset index
-    first_onset = onset_indices[0]
-    
-    # Label everything from first onset to end as block 1 initially
-    df_copy.loc[first_onset:, 'block'] = 1
-    current_block = 1
-    
-    # Add first block boundary
-    block_boundaries.append(first_onset)
-    
-    # Check each odor onset
-    for onset_idx in onset_indices:
-        heading = df_copy.loc[onset_idx, 'heading']
-        odor_on = df_copy.loc[onset_idx, 'odor'] > -1.5
-        
-        if current_block == 1:
-            # Condition 1: Heading is within block 1 range and odor is OFF
-            in_block_1 = start_dir_1 <= heading <= end_dir_1 and not odor_on
-            
-            # Condition 2: Heading is within block 2 range and odor is ON
-            in_block_2 = start_dir_2 <= heading <= end_dir_2 and odor_on
-            
-            # Switch to block 2 if either condition is met
-            if (in_block_1 or in_block_2) and not block_2_started:
-                # Start block 2
-                df_copy.loc[onset_idx:, 'block'] = 2
-                current_block = 2
-                block_2_started = True
-                # Add block 2 boundary
-                block_boundaries.append(onset_idx)
-    
-    return df_copy, block_boundaries'''
-
 def label_blocks(df, initial_t, block_durations=None, 
                 start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
                 start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
@@ -1752,12 +1677,65 @@ def label_blocks(df, initial_t, block_durations=None,
     
     return df_copy, block_boundaries
 
+def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', return_mask=False):
+    """
+    Filter behavioral DataFrame based on net_motion threshold.
+    
+    Parameters:
+    -----------
+    behav_df : pandas.DataFrame
+        Behavioral DataFrame containing motion data
+    motion_threshold : float, default=0.0
+        Minimum threshold for net_motion. Rows with values below this are filtered out
+    motion_col : str, default='net_motion'
+        Name of the column containing motion data
+    return_mask : bool, default=False
+        If True, also return the boolean mask used for filtering
+        
+    Returns:
+    --------
+    pandas.DataFrame or tuple
+        Filtered DataFrame, or (filtered DataFrame, mask) if return_mask=True
+    
+    Example:
+    --------
+    # Basic filtering
+    filtered_df = filter_by_motion(behav_df, motion_threshold=0.1)
+    
+    # Get both filtered df and mask
+    filtered_df, mask = filter_by_motion(behav_df, motion_threshold=0.1, return_mask=True)
+    print(f"Kept {mask.sum()} out of {len(mask)} points ({mask.mean()*100:.1f}%)")
+    """
+    # Check if motion column exists
+    if motion_col not in behav_df.columns:
+        raise ValueError(f"Column '{motion_col}' not found in DataFrame")
+    
+    # Create motion mask
+    motion_mask = behav_df[motion_col] >= motion_threshold
+    
+    # Apply filter
+    filtered_df = behav_df[motion_mask].copy()
+    
+    # Print summary of filtering
+    n_original = len(behav_df)
+    n_kept = len(filtered_df)
+    percent_kept = (n_kept / n_original) * 100
+    
+    print(f"Motion filtering summary:")
+    print(f"Original points: {n_original}")
+    print(f"Points kept: {n_kept} ({percent_kept:.1f}%)")
+    print(f"Points removed: {n_original - n_kept} ({100 - percent_kept:.1f}%)")
+    
+    if return_mask:
+        return filtered_df, motion_mask
+    return filtered_df
+
 # encoding, decoding models 
 # calcium imaging GLM 
 
 base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-example_path_data = base_path+"20241105-2_MBON09_blocks/data/"
-example_path_results = base_path+"20241105-2_MBON09_blocks/results/"
+example_path_data = base_path+"20241105-5_MBON09_blocks/data/"
+example_path_results = base_path+"20241105-5_MBON09_blocks/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1924,7 +1902,15 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     elif segment_by_block:
-        behav_df, block_boundaries = label_blocks(behav_df,50,[200,400,0,400,0])
+        behav_df, block_boundaries = label_blocks(behav_df,50,[200,350,60,350,60])
+    # Get both filtered data and mask
+    motion_threshold=0.5
+    behav_df, motion_mask = filter_by_motion(behav_df, 
+                                                motion_threshold, 
+                                                return_mask=True)
+
+# Apply same mask to neural_df if needed
+    neural_df = neural_df[motion_mask]
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -1972,7 +1958,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
                 plot_tuning_curve_and_scatter(np.array(neural_activity_i.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, segment_by_dir, segment_by_block, unique_seg[i])
 
     elif segment_by_block:
-        clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'block', example_path_results, trial_num)
+        clicked_indices = plot_fly_traj_interactive(behav_df.xPos, behav_df.yPos, behav_df, 'block', example_path_results, trial_num)
         unique_block = combined_df['block'].unique()
         unique_block = unique_block[~np.isnan(unique_block)]
         plot_heading_tuning_circular(behav_df, neural_df, unique_block, filtered_columns, example_path_results, trial_num)
@@ -1991,7 +1977,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-main_new(example_path_data, example_path_results,2,False, False,False)
+main_new(example_path_data, example_path_results,1,False, True,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
