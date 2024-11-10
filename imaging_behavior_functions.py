@@ -1586,7 +1586,7 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
 
 
 
-def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
+'''def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
     """
     Label blocks in a DataFrame based on odor onset, heading direction criteria,
     and return block boundary indices.
@@ -1658,17 +1658,106 @@ def label_blocks(df, initial_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, start_
                 # Add block 2 boundary
                 block_boundaries.append(onset_idx)
     
+    return df_copy, block_boundaries'''
+
+def label_blocks(df, initial_t, block_durations=None, 
+                start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
+                start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
+    """
+    Label blocks in a DataFrame based on odor onset, heading direction criteria,
+    and return block boundary indices. For blocks 2-5, also enforces maximum block duration.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame containing 'odor', 'heading', and 'time' columns
+    initial_t : float
+        Time before which any odor onsets should be ignored for odor-based transitions
+    block_durations : list, optional
+        Reference durations for each block in seconds [block1, block2, block3, block4, block5]
+        For blocks 2-5, these serve as maximum durations
+    start_dir_1, end_dir_1 : float
+        Start and end directions (in radians) for block 2 odor delivery
+    start_dir_2, end_dir_2 : float
+        Start and end directions (in radians) for block 4 odor delivery
+        
+    Returns:
+    --------
+    tuple
+        (DataFrame with new 'block' column, list of block boundary indices)
+    """
+    df_copy = df.copy()
+    # Initialize all data as block 1
+    df_copy['block'] = 1
+    block_boundaries = [df_copy.index[0]]
+    current_block = 1
+    last_boundary = df_copy.index[0]
+    
+    # Find indices where odor is present and time is after initial_t
+    # These are only used for odor-based transitions
+    onset_indices = df_copy.index[(df_copy['odor'] > -1.5) & (df_copy['time'] > initial_t)].tolist()
+    
+    # Function to check block transition conditions based on odor/heading
+    def check_odor_transition(idx, current_block):
+        heading = df_copy.loc[idx, 'heading']
+        odor_on = df_copy.loc[idx, 'odor'] > -1.5
+        
+        if current_block == 1:
+            return start_dir_1 <= heading <= end_dir_1 and odor_on
+        elif current_block == 2:
+            return start_dir_1 <= heading <= end_dir_1 and not odor_on
+        elif current_block == 3:
+            return start_dir_2 <= heading <= end_dir_2 and odor_on
+        elif current_block == 4:
+            return start_dir_2 <= heading <= end_dir_2 and not odor_on
+        return False
+        
+    # Process each index after start
+    for idx in df_copy.index[1:]:
+        # Check for time-based transition for blocks 2-5
+        if block_durations is not None and current_block >= 2 and current_block <= 4:
+            elapsed_time = df_copy.loc[idx, 'time'] - df_copy.loc[last_boundary, 'time']
+            if elapsed_time >= block_durations[current_block-1]:
+                # Time exceeded, force transition to next block
+                next_block = current_block + 1
+                # Skip zero-duration blocks
+                while next_block <= 5 and block_durations is not None:
+                    if block_durations[next_block-1] == 0:
+                        next_block += 1
+                    else:
+                        break
+                        
+                if next_block <= 5:
+                    df_copy.loc[idx:, 'block'] = next_block
+                    block_boundaries.append(idx)
+                    current_block = next_block
+                    last_boundary = idx
+                continue
+        
+        # Check for odor-based transition (only if this index is in onset_indices)
+        if idx in onset_indices and check_odor_transition(idx, current_block):
+            next_block = current_block + 1
+            # Skip zero-duration blocks
+            while next_block <= 5 and block_durations is not None:
+                if block_durations[next_block-1] == 0:
+                    next_block += 1
+                else:
+                    break
+                    
+            if next_block <= 5:
+                df_copy.loc[idx:, 'block'] = next_block
+                block_boundaries.append(idx)
+                current_block = next_block
+                last_boundary = idx
+    
     return df_copy, block_boundaries
-
-
-
 
 # encoding, decoding models 
 # calcium imaging GLM 
 
 base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-example_path_data = base_path+"20241101-1_MBON09_blocks/data/"
-example_path_results = base_path+"20241101-1_MBON09_blocks/results/"
+example_path_data = base_path+"20241105-2_MBON09_blocks/data/"
+example_path_results = base_path+"20241105-2_MBON09_blocks/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1835,7 +1924,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     elif segment_by_block:
-        behav_df, block_boundaries = label_blocks(behav_df,50)
+        behav_df, block_boundaries = label_blocks(behav_df,50,[200,400,0,400,0])
     combined_df = combine_df(behav_df, neural_df)
     
     # Extract and plot data
@@ -1902,7 +1991,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-#main_new(example_path_data, example_path_results,4,False, True,False)
+main_new(example_path_data, example_path_results,2,False, False,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
