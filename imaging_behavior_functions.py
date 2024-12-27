@@ -1733,9 +1733,9 @@ def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', re
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-example_path_data = base_path+"20241105-5_MBON09_blocks/data/"
-example_path_results = base_path+"20241105-5_MBON09_blocks/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON09/"
+example_path_data = base_path+"20241101-1_MBON09_blocks/data/"
+example_path_results = base_path+"20241101-1_MBON09_blocks/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1904,7 +1904,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
     elif segment_by_block:
         behav_df, block_boundaries = label_blocks(behav_df,50,[200,350,60,350,60])
     # Get both filtered data and mask
-    motion_threshold=0.5
+    motion_threshold=1
     behav_df, motion_mask = filter_by_motion(behav_df, 
                                                 motion_threshold, 
                                                 return_mask=True)
@@ -1977,7 +1977,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-main_new(example_path_data, example_path_results,1,False, True,False)
+main_new(example_path_data, example_path_results,2,False, False,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
