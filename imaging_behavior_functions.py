@@ -149,7 +149,7 @@ def process_resp_to_neural_df(ts_resp):
     return neural_df
 
 
-def load_matfile_to_df(example_path_data, trial_num):
+def load_matfile_to_df(example_path_data, folder_name, trial_num):
     """
     Load a MATLAB v7.3 .mat file using the mat73 library and extract struct variables into a pandas DataFrame.
     
@@ -159,8 +159,12 @@ def load_matfile_to_df(example_path_data, trial_num):
     Returns:
     pd.DataFrame: A DataFrame with extracted fields from the MATLAB struct.
     """
+    # Extract relevant parts
+    date_part = folder_name.split('-')[0]  # Extract the date (e.g., "20250105")
+    fly_num = folder_name.split('-')[1].split('_')[0]  # Extract the trial number (e.g., "5")
+
     # Load the .mat file
-    mat_data = mat73.loadmat(example_path_data+'ts_trial'+str(trial_num)+'.mat')
+    mat_data = mat73.loadmat(example_path_data+f"{date_part}_{fly_num}_{trial_num}"+'_ts_.mat')
 
     # Extract the 'ts' struct from the loaded data
     ts = mat_data['ts']
@@ -170,7 +174,7 @@ def load_matfile_to_df(example_path_data, trial_num):
 
     # List of relevant sub-structs, including 'resp'
     sub_structs = ['flypos', 'ball', 'vis', 'resp']
-    
+    neural_df = pd.DataFrame()
     # Loop over each sub-struct and extract its fields
     for sub_struct_name in sub_structs:
         if sub_struct_name in ts:
@@ -192,8 +196,8 @@ def load_matfile_to_df(example_path_data, trial_num):
     # Convert the dictionary into a pandas DataFrame
     behav_df = pd.DataFrame(data)
     # Add 'ti' (time) to both df and neural_df
-    if 'ti' in ts:
-        time = ts['ti']
+    if 't' in ts:
+        time = ts['t']
         behav_df['time'] = time  # Add time to df
         neural_df['time'] = time  # Add time to neural_df as well
     if 'odor' in ts:
@@ -1733,9 +1737,10 @@ def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', re
 # encoding, decoding models 
 # calcium imaging GLM 
 
-base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/MBON_imaging/MBON09/"
-example_path_data = base_path+"20241101-1_MBON09_blocks/data/"
-example_path_results = base_path+"20241101-1_MBON09_blocks/results/"
+base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
+folder_name = "20250105-3_FB5V_jump"
+example_path_data = base_path+f"{folder_name}/data/"
+example_path_results = base_path+f"{folder_name}/results/"
 #trial_num = 1
 #qualified_trials = find_complete_trials(example_path_data)
 #print(qualified_trials)
@@ -1856,12 +1861,12 @@ def main(example_path_data, example_path_results, trial_num, segment_by_dir, seg
 def main_new(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, caiman_only, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
-    roi_kw, roi_kw2 = 'MBON', 'FB'
+    roi_kw, roi_kw2 = 'FB5V', 'MB'
     #tuning_whole_session = False
 
     # Load data and preprocess
     #is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data, trial_num)
-    behav_df, neural_df_new = load_matfile_to_df(example_path_data, trial_num)
+    behav_df, neural_df_new = load_matfile_to_df(example_path_data, folder_name, trial_num)
     behav_df = rename_dataframe(behav_df)
     behav_df = detect_jumps_unwrapped(behav_df, 'heading', 'time', jump_threshold=np.pi/4, min_time_between_jumps=30)
     behav_df = make_df_behavior_new(behav_df)
@@ -1977,7 +1982,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-main_new(example_path_data, example_path_results,2,False, False,False)
+main_new(example_path_data, example_path_results,5,False, False,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
