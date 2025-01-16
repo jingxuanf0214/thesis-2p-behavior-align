@@ -163,9 +163,19 @@ def load_matfile_to_df(example_path_data, folder_name, trial_num):
     date_part = folder_name.split('-')[0]  # Extract the date (e.g., "20250105")
     fly_num = folder_name.split('-')[1].split('_')[0]  # Extract the trial number (e.g., "5")
 
-    # Load the .mat file
-    mat_data = mat73.loadmat(example_path_data+f"{date_part}_{fly_num}_{trial_num}"+'_ts_.mat')
-
+    try:
+        # Attempt to load the .mat file using mat73
+        mat_data = mat73.loadmat(example_path_data+f"{date_part}_{fly_num}_{trial_num}"+'_ts_.mat')
+        print("Loaded using mat73.")
+    except Exception as e:
+        print(f"mat73 failed with error: {e}. Trying scipy.io.loadmat...")
+        try:
+            # Fall back to scipy.io.loadmat
+            mat_data = scipy.io.loadmat(example_path_data+f"{date_part}_{fly_num}_{trial_num}"+'_ts_.mat')
+            print("Loaded using scipy.io.loadmat.")
+        except Exception as e2:
+            print(f"scipy.io.loadmat also failed with error: {e2}.")
+            mat_data = None
     # Extract the 'ts' struct from the loaded data
     ts = mat_data['ts']
     
@@ -196,8 +206,8 @@ def load_matfile_to_df(example_path_data, folder_name, trial_num):
     # Convert the dictionary into a pandas DataFrame
     behav_df = pd.DataFrame(data)
     # Add 'ti' (time) to both df and neural_df
-    if 't' in ts:
-        time = ts['t']
+    if 'ti' in ts:
+        time = ts['ti']
         behav_df['time'] = time  # Add time to df
         neural_df['time'] = time  # Add time to neural_df as well
     if 'odor' in ts:
@@ -1738,7 +1748,7 @@ def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', re
 # calcium imaging GLM 
 
 base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-folder_name = "20250105-3_FB5V_jump"
+folder_name = "20241113-2_MBON21_blocks"
 example_path_data = base_path+f"{folder_name}/data/"
 example_path_results = base_path+f"{folder_name}/results/"
 #trial_num = 1
@@ -1861,7 +1871,7 @@ def main(example_path_data, example_path_results, trial_num, segment_by_dir, seg
 def main_new(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, caiman_only, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
-    roi_kw, roi_kw2 = 'FB5V', 'MB'
+    roi_kw, roi_kw2 = 'MBON', 'FB'
     #tuning_whole_session = False
 
     # Load data and preprocess
@@ -1982,7 +1992,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-main_new(example_path_data, example_path_results,5,False, False,False)
+#main_new(example_path_data, example_path_results,2,False, True,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
