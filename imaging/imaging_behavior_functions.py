@@ -205,6 +205,8 @@ def load_matfile_to_df(example_path_data, folder_name, trial_num):
 
     # Convert the dictionary into a pandas DataFrame
     behav_df = pd.DataFrame(data)
+    #behav_df.rename(columns={'ball_yaw': 'odor'}, inplace=True)
+    #behav_df['odor_state'] = behav_df['odor']>-1.5
     # Add 'ti' (time) to both df and neural_df
     if 'ti' in ts:
         time = ts['ti']
@@ -869,20 +871,24 @@ def calculate_pva_hdeltab(activity_matrix):
     pva_amplitude = np.sqrt(sum_x**2 + sum_y**2)  # Magnitude of the vector
     return pva_phase, pva_amplitude
 
+
 def fit_sinusoid(neural_df, roi_mtx):
     def test_func(x, dist, amp, phi):
         return dist + amp * np.cos(x + phi)
+
     timestamp, num_roi = np.shape(roi_mtx)
-    x_p = np.linspace(0, 2*np.pi, num=num_roi)
+    x_p = np.linspace(0, 2 * np.pi, num=num_roi)
     trial_len = timestamp
+
     phase_sinfit = np.zeros(trial_len)
     base_sinfit = np.zeros(trial_len)
     amp_sinfit = np.zeros(trial_len)
     phase_perr = np.zeros(trial_len)
     base_perr = np.zeros(trial_len)
     amp_perr = np.zeros(trial_len)
+
     for i in range(trial_len):
-        params, params_covariance = optimize.curve_fit(test_func, x_p, roi_mtx[i,:],maxfev = 5000)
+        params, params_covariance = optimize.curve_fit(test_func, x_p, roi_mtx[i, :], maxfev=5000)
         phase_sinfit[i] = x_p[np.argmax(test_func(x_p, params[0], params[1], params[2]))]
         amp_sinfit[i] = np.abs(params[1])
         base_sinfit[i] = params[0]
@@ -890,9 +896,22 @@ def fit_sinusoid(neural_df, roi_mtx):
         phase_perr[i] = perr[2]
         base_perr[i] = perr[0]
         amp_perr[i] = perr[1]
-    time = neural_df.time
-    paramfit_df = pd.DataFrame({'time': time, 'phase': phase_sinfit, 'baseline': base_sinfit, 'amplitude': amp_sinfit, 'phase_error':phase_perr, "baseline_error": base_perr, "amplitude_error":amp_perr})
-    return paramfit_df
+
+    paramfit_df = pd.DataFrame({
+        'time': neural_df['time'], 
+        'phase': phase_sinfit, 
+        'baseline': base_sinfit, 
+        'amplitude': amp_sinfit, 
+        'phase_error': phase_perr, 
+        'baseline_error': base_perr, 
+        'amplitude_error': amp_perr
+    })
+
+    # Merge paramfit_df onto neural_df based on 'time'
+    merged_df = neural_df.merge(paramfit_df, on='time', how='left')
+
+    return merged_df
+
 
 #paramfit_df = fit_sinusoid(neural_df, roi_mtx)
 #print(paramfit_df.head(5))
@@ -1613,7 +1632,7 @@ def process_behavioral_variables(behav_df, example_path_results, trial_num):
     return mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables
 
 
-def label_blocks(df, initial_t, block_durations=None, 
+'''def label_blocks(df, initial_t, block_durations=None, 
                 start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
                 start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
     """
@@ -1703,7 +1722,131 @@ def label_blocks(df, initial_t, block_durations=None,
                 current_block = next_block
                 last_boundary = idx
     
+    return df_copy, block_boundaries'''
+
+
+
+def label_blocks_3(df, init_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
+    start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
+    # Create a mask for rows after the initial time
+    mask_after_init = df['time'] >= init_t
+
+    # Create masks for the conditions
+    mask_odor_on = df['odor_state']
+    mask_heading_1 = (df['heading'] >= start_dir_1) & (df['heading'] <= end_dir_1)
+    mask_heading_2 = (df['heading'] >= start_dir_2) & (df['heading'] <= end_dir_2)
+
+    # Combine masks for block transitions
+    mask_block_1_start = mask_after_init & mask_odor_on & mask_heading_1
+    mask_block_1_end = mask_after_init & ~mask_odor_on & mask_heading_1
+    mask_block_2_start = mask_after_init & mask_odor_on & mask_heading_2
+
+    # Initialize the block column with zeros
+    df['block'] = 0
+
+    # Identify the indices for block transitions
+    block_1_indices = mask_block_1_start.cumsum()
+    block_1_persist = (block_1_indices > 0) & ~(mask_block_1_end & (block_1_indices > 0))
+    
+    block_2_indices = (mask_block_2_start & block_1_persist).cumsum()
+    block_2_persist = block_2_indices > 0
+
+    # Assign block values
+    df.loc[block_1_persist, 'block'] = 1
+    df.loc[block_2_persist, 'block'] = 2
+
+    # Find block boundaries
+    block_boundaries = df[df['block'].diff().fillna(0) != 0].index.tolist()
+
+    return df, block_boundaries
+
+
+
+def label_blocks(
+    df, initial_t, block_durations=None, use_time_based_transitions=True,
+    start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
+    start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3
+):
+    """
+    Label blocks in a DataFrame based on odor onset, heading direction criteria,
+    and optionally time-based transitions, returning block boundary indices.
+
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame containing 'odor', 'heading', and 'time' columns.
+    initial_t : float
+        Time before which any odor onsets should be ignored for odor-based transitions.
+    block_durations : list, optional
+        Reference durations for each block in seconds [block1, block2, block3, block4, block5].
+        For blocks 2-5, these serve as maximum durations if time-based transitions are enabled.
+    use_time_based_transitions : bool, default True
+        Whether to apply time-based transitions for blocks 2-5.
+    start_dir_1, end_dir_1 : float
+        Start and end directions (in radians) for block 2 odor delivery.
+    start_dir_2, end_dir_2 : float
+        Start and end directions (in radians) for block 4 odor delivery.
+
+    Returns:
+    --------
+    tuple
+        (DataFrame with new 'block' column, list of block boundary indices)
+    """
+    df_copy = df.copy()
+    df_copy['block'] = 1
+    block_boundaries = [df_copy.index[0]]
+    current_block = 1
+    last_boundary = df_copy.index[0]
+    
+    # Find indices where odor is present and time is after initial_t
+    onset_indices = df_copy.index[(df_copy['odor'] > -1.5) & (df_copy['time'] > initial_t)].tolist()
+    
+    # Function to check block transition conditions based on odor/heading
+    def check_odor_transition(idx, current_block):
+        heading = df_copy.loc[idx, 'heading']
+        odor_on = df_copy.loc[idx, 'odor'] > -1.5
+        
+        if current_block == 1:
+            return start_dir_1 <= heading <= end_dir_1 and odor_on
+        elif current_block == 2:
+            return start_dir_1 <= heading <= end_dir_1 and not odor_on
+        elif current_block == 3:
+            return start_dir_2 <= heading <= end_dir_2 and odor_on
+        elif current_block == 4:
+            return start_dir_2 <= heading <= end_dir_2 and not odor_on
+        return False
+    
+    # Process each index after start
+    for idx in df_copy.index[1:]:
+        # Check for time-based transition for blocks 2-5 if enabled
+        if use_time_based_transitions and block_durations is not None and current_block >= 2 and current_block <= 4:
+            elapsed_time = df_copy.loc[idx, 'time'] - df_copy.loc[last_boundary, 'time']
+            if elapsed_time >= block_durations[current_block-1]:
+                next_block = current_block + 1
+                # Skip zero-duration blocks
+                while next_block <= 5 and block_durations[next_block-1] == 0:
+                    next_block += 1
+                if next_block <= 5:
+                    df_copy.loc[idx:, 'block'] = next_block
+                    block_boundaries.append(idx)
+                    current_block = next_block
+                    last_boundary = idx
+                continue
+        
+        # Check for odor-based transition
+        if idx in onset_indices and check_odor_transition(idx, current_block):
+            next_block = current_block + 1
+            # Skip zero-duration blocks
+            while next_block <= 5 and block_durations[next_block-1] == 0:
+                next_block += 1
+            if next_block <= 5:
+                df_copy.loc[idx:, 'block'] = next_block
+                block_boundaries.append(idx)
+                current_block = next_block
+                last_boundary = idx
+    
     return df_copy, block_boundaries
+
 
 def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', return_mask=False):
     """
@@ -1762,7 +1905,7 @@ def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', re
 # calcium imaging GLM 
 
 base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-folder_name = "20241113-2_MBON21_blocks"
+folder_name = "20241030-5_MBON09_blocks"
 example_path_data = base_path+f"{folder_name}/data/"
 example_path_results = base_path+f"{folder_name}/results/"
 #trial_num = 1
@@ -2006,7 +2149,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-#main_new(example_path_data, example_path_results,2,False, True,False)
+#main_new(example_path_data, example_path_results,2,False, False,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
