@@ -248,48 +248,60 @@ def rename_dataframe(df):
     return df
 
 
+def detect_circular_jumps(df, heading_col='heading', time_col='time', threshold=np.pi/2, 
+                          min_jump_time=60, max_jump_time=80):
+    """
+    Computes absolute circular differences, detects jumps, and checks if jumps occur within a valid time interval.
 
-def detect_jumps_unwrapped(
-    df, heading_column, time_column, jump_threshold=np.pi/4, min_time_between_jumps=60, max_time_between_jumps=80
-):
-    # Unwrap the heading data
-    unwrapped_heading = np.unwrap(df[heading_column])
+    Parameters:
+        df (pd.DataFrame): DataFrame containing the heading column and optionally a time column.
+        heading_col (str): Name of the column containing the circular variable in radians.
+        time_col (str or None): Name of the column containing time values (optional).
+        threshold (float): Threshold in radians to detect significant jumps.
+        min_jump_time (float): Minimum allowed time interval between detected jumps.
+        max_jump_time (float): Maximum allowed time interval between detected jumps.
 
-    # Calculate the difference between consecutive unwrapped headings
-    heading_diff = np.diff(unwrapped_heading)
+    Returns:
+        pd.DataFrame: Modified DataFrame with 'absolute_circular_diff' and 'jump_detected' columns.
+        Prints warnings if detected jumps occur too frequently or too infrequently.
+    """
+    # Ensure the heading column exists
+    if heading_col not in df.columns:
+        raise ValueError(f"Column '{heading_col}' not found in DataFrame.")
 
-    # Find potential jump indices
-    potential_jump_indices = np.where(np.abs(heading_diff) > jump_threshold)[0]
+    # Compute absolute circular difference
+    circular_diff = np.abs(np.arctan2(
+        np.sin(np.diff(df[heading_col], prepend=df[heading_col].iloc[0])),
+        np.cos(np.diff(df[heading_col], prepend=df[heading_col].iloc[0]))
+    ))
 
-    # Initialize list to store confirmed jump indices
-    jump_indices = []
+    # Detect jumps where circular difference exceeds threshold
+    jump_detected = (circular_diff > threshold).astype(int)
 
-    # Check each potential jump
-    for i, jump_index in enumerate(potential_jump_indices):
-        if i == 0:
-            jump_indices.append(jump_index)
-        else:
-            # Check if enough time has passed since the last jump
-            time_since_last_jump = df[time_column].iloc[jump_index] - df[time_column].iloc[jump_indices[-1]]
-            if time_since_last_jump >= min_time_between_jumps:
-                jump_indices.append(jump_index)
+    # Add results to DataFrame
+    df['absolute_circular_diff'] = circular_diff
+    df['jump_detected'] = jump_detected
 
-    # Initialize a new column with zeros (no jumps)
-    df['jump_detected'] = 0
+    # If time column is provided, check jump intervals
+    if time_col and time_col in df.columns:
+        jump_indices = df.index[df['jump_detected'] == 1].to_list()
+        time_values = df[time_col]
 
-    # Set 'jump_detected' to 1 at the jump indices
-    df.loc[jump_indices, 'jump_detected'] = 1
+        if len(jump_indices) > 1:  # Only check intervals if there are multiple jumps
+            jump_intervals = np.diff(time_values.iloc[jump_indices])
 
-    # Calculate time differences between consecutive jumps
-    if len(jump_indices) > 1:
-        time_diffs = np.diff(df[time_column].iloc[jump_indices].values)
-        max_time_diff = max(time_diffs)
+            # Check if any interval is smaller than min_jump_time
+            if np.any(jump_intervals < min_jump_time):
+                print(f"Warning: Some jumps are happening too frequently (< {min_jump_time} time units). "
+                      f"Consider increasing the threshold ({threshold:.2f} rad).")
 
-        # Check if max time between jumps exceeds the allowed threshold
-        if max_time_diff > max_time_between_jumps:
-            print(f"Maximum time between jumps ({max_time_diff}) exceeds the allowed threshold. Consider lowering the jump threshold.")
+            # Check if any interval is larger than max_jump_time
+            if np.any(jump_intervals > max_jump_time):
+                print(f"Warning: Some jumps are happening too infrequently (> {max_jump_time} time units). "
+                      f"Consider lowering the threshold ({threshold:.2f} rad).")
 
     return df
+
 
 
 
@@ -1760,6 +1772,146 @@ def label_blocks_3(df, init_t, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3,
 
     return df, block_boundaries
 
+
+def label_blocks_5(df, init_t, time_lengths, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
+                   start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3):
+    """
+    Labels 5 blocks in the dataframe.
+    
+    Parameters:
+        df (DataFrame): The input dataframe containing 'time', 'odor_state', and 'heading'.
+        init_t (float): Initial time threshold for block transitions.
+        time_lengths (list): List containing the time durations for block 1, 2, and 3.
+        start_dir_1, end_dir_1 (float): Direction range for block 1.
+        start_dir_2, end_dir_2 (float): Direction range for block 2.
+    
+    Returns:
+        DataFrame: Updated dataframe with labeled blocks.
+        list: Indices of block transitions.
+    """
+    # Create a mask for rows after the initial time
+    mask_after_init = df['time'] >= init_t
+
+    # Create masks for the conditions
+    mask_odor_on = df['odor_state']
+    mask_heading_1 = (df['heading'] >= start_dir_1) & (df['heading'] <= end_dir_1)
+    mask_heading_2 = (df['heading'] >= start_dir_2) & (df['heading'] <= end_dir_2)
+
+    # Combine masks for block transitions
+    mask_block_1_start = mask_after_init & mask_odor_on & mask_heading_1
+    mask_block_1_end = mask_after_init & ~mask_odor_on & mask_heading_1
+    mask_block_2_start = mask_after_init & mask_odor_on & mask_heading_2
+
+    # Initialize the block column with zeros
+    df['block'] = 0
+
+    # Identify the indices for block transitions
+    block_1_indices = mask_block_1_start.cumsum()
+    block_1_persist = (block_1_indices > 0) & ~(mask_block_1_end & (block_1_indices > 0))
+    df.loc[block_1_persist, 'block'] = 1
+
+    # Find start time for block 1
+    block_1_start_time = df.loc[block_1_persist, 'time'].min()
+    
+    # Compute transition times for subsequent blocks
+    block_2_start_time = block_1_start_time + time_lengths[0]
+    block_3_start_time = block_2_start_time + time_lengths[1]
+    block_4_start_time = block_3_start_time + time_lengths[2]
+
+    # Assign blocks based on time transitions
+    df.loc[(df['time'] >= block_2_start_time) & (df['time'] < block_3_start_time), 'block'] = 2
+    df.loc[(df['time'] >= block_3_start_time) & (df['time'] < block_4_start_time), 'block'] = 3
+    df.loc[df['time'] >= block_4_start_time, 'block'] = 4
+
+    # Find block boundaries
+    block_boundaries = df[df['block'].diff().fillna(0) != 0].index.tolist()
+    
+    return df, block_boundaries
+
+
+def label_blocks_5_v2(df, init_t, time_lengths, start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
+                   start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3,detection_threshold=0.01,required_consecutive=1):
+    """
+    Labels 5 blocks in the dataframe based on odor and heading contingency.
+    
+    Parameters:
+        df (DataFrame): The input dataframe containing 'time', 'odor_state', and 'heading'.
+        init_t (float): Initial time threshold for block transitions.
+        time_lengths (list): List containing the time durations for block 1, 2, and 3.
+        start_dir_1, end_dir_1 (float): Direction range for block 1.
+        start_dir_2, end_dir_2 (float): Direction range for block 2.
+    
+    Returns:
+        DataFrame: Updated dataframe with labeled blocks.
+        list: Indices of block transitions.
+    """
+    df = df.copy()
+    df['block'] = 0
+    mask_after_init = df['time'] >= init_t
+    
+    block_boundaries = []
+    block = 0
+    #block_start_time = init_t
+    odor_detected = False
+    odor_lost = False
+    consecutive_count = 0
+    #required_consecutive = 1
+    for i, row in df.iterrows():
+        if row['time'] < init_t:
+            continue
+        
+        if block == 0:
+            if row['odor_state'] and start_dir_1 <= row['heading'] <= end_dir_1:
+                block = 1
+                block_boundaries.append(i)
+                block_start_time = row['time']
+            
+        elif block == 1:
+            if not row['odor_state'] and start_dir_1+detection_threshold < row['heading'] < end_dir_1-detection_threshold:
+                odor_lost_count += 1
+                if odor_lost_count >= required_consecutive:
+                    odor_lost = True
+                    #print(f"transition 1 {row}")
+            else:
+                odor_lost_count = 0
+            if odor_lost or row['time'] - block_start_time >= time_lengths[0]:
+                block = 2
+                block_boundaries.append(i)
+                block_start_time = row['time']
+                odor_lost = False
+            
+        elif block == 2:
+            if row['odor_state'] and start_dir_2+detection_threshold <= row['heading'] <= end_dir_2-detection_threshold:
+                consecutive_count += 1
+                if consecutive_count >= required_consecutive:
+                    odor_detected = True
+                    #print(f"transition 2 {row}")
+            else:
+                consecutive_count = 0
+            if odor_detected or row['time'] - block_start_time >= time_lengths[1]:
+                #print(f"transition 2 {row}")
+                block = 3
+                block_boundaries.append(i)
+                block_start_time = row['time']
+                odor_detected = False
+            
+        elif block == 3:
+            if not row['odor_state'] and start_dir_2+detection_threshold < row['heading'] < end_dir_2-detection_threshold:
+                odor_lost_count += 1
+                if odor_lost_count >= required_consecutive:
+                    odor_lost = True
+                    #print(f"transition 3 {row}")
+            else:
+                odor_lost_count = 0
+            if odor_lost or row['time'] - block_start_time >= time_lengths[2]:
+                block = 4
+                block_boundaries.append(i)
+                block_start_time = row['time']
+                odor_lost = False
+                
+        df.at[i, 'block'] = block
+    
+    return df, block_boundaries
 
 
 def label_blocks(
