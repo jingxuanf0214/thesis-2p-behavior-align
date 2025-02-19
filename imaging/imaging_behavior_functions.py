@@ -22,10 +22,15 @@ from scipy.stats import circmean, circstd
 from scipy.stats import sem
 import json
 from matplotlib.widgets import Button
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 from abc import ABC, abstractmethod
 from scipy import stats
 from scipy.stats import gaussian_kde
 from scipy.signal import find_peaks
+
+
+################################# Loading #################################
 
 def is_notebook():
     try:
@@ -39,7 +44,28 @@ def is_notebook():
 
     return True
 
-# load mat data new
+def find_complete_trials(path_to_folder):
+    # List all .mat files in the folder
+    all_files = [f for f in os.listdir(path_to_folder) if f.endswith('.mat')]
+    
+    # Extract trial numbers from file names
+    trial_numbers = set()
+    for file_name in all_files:
+        match = re.search(r'trial(\d+)', file_name)
+        if match:
+            trial_numbers.add(int(match.group(1)))
+    
+    # Check for complete set of files for each trial
+    complete_trials = []
+    for trial_num in trial_numbers:
+        dff_path = os.path.join(path_to_folder, f'dff raw trial{trial_num}.mat')
+        preprocessed_path = os.path.join(path_to_folder, f'preprocessed_vars_ds trial{trial_num}.mat')
+        # Check if both required files exist
+        if os.path.exists(dff_path) and os.path.exists(preprocessed_path):
+            complete_trials.append(trial_num)
+    
+    # Return the list of complete trial numbers
+    return complete_trials
 
 def extract_struct_fields(struct, prefix=""):
     """
@@ -149,33 +175,37 @@ def process_resp_to_neural_df(ts_resp):
     return neural_df
 
 
-def load_matfile_to_df(example_path_data, folder_name, trial_num):
+def load_matfile_to_df(example_path_data, folder_name, trial_num, is_odor_trial=False):
     """
     Load a MATLAB v7.3 .mat file using the mat73 library and extract struct variables into a pandas DataFrame.
     
     Args:
-    matfile_path (str): Path to the .mat file.
-    
+        example_path_data (str): Path to the .mat file directory.
+        folder_name (str): Folder name containing date and fly number.
+        trial_num (int or str): Trial number identifier.
+        is_odor_trial (bool): Whether to include odor-related processing.
+
     Returns:
-    pd.DataFrame: A DataFrame with extracted fields from the MATLAB struct.
+        pd.DataFrame: A DataFrame with extracted behavioral and neural data.
     """
     # Extract relevant parts
     date_part = folder_name.split('-')[0]  # Extract the date (e.g., "20250105")
-    fly_num = folder_name.split('-')[1].split('_')[0]  # Extract the trial number (e.g., "5")
+    fly_num = folder_name.split('-')[1].split('_')[0]  # Extract the fly number (e.g., "5")
 
     try:
         # Attempt to load the .mat file using mat73
-        mat_data = mat73.loadmat(example_path_data+f"{date_part}_{fly_num}_{trial_num}"+'_ts_.mat')
+        mat_data = mat73.loadmat(example_path_data + f"{date_part}_{fly_num}_{trial_num}_ts_.mat")
         print("Loaded using mat73.")
     except Exception as e:
         print(f"mat73 failed with error: {e}. Trying scipy.io.loadmat...")
         try:
             # Fall back to scipy.io.loadmat
-            mat_data = scipy.io.loadmat(example_path_data+f"{date_part}_{fly_num}_{trial_num}"+'_ts_.mat')
+            mat_data = scipy.io.loadmat(example_path_data + f"{date_part}_{fly_num}_{trial_num}_ts_.mat")
             print("Loaded using scipy.io.loadmat.")
         except Exception as e2:
             print(f"scipy.io.loadmat also failed with error: {e2}.")
             mat_data = None
+    
     # Extract the 'ts' struct from the loaded data
     ts = mat_data['ts']
     
@@ -185,41 +215,38 @@ def load_matfile_to_df(example_path_data, folder_name, trial_num):
     # List of relevant sub-structs, including 'resp'
     sub_structs = ['flypos', 'ball', 'vis', 'resp']
     neural_df = pd.DataFrame()
+
     # Loop over each sub-struct and extract its fields
     for sub_struct_name in sub_structs:
         if sub_struct_name in ts:
             sub_struct = ts[sub_struct_name]
-            #print(sub_struct)
+            
             # Special case for 'resp' sub-struct
             if sub_struct_name == 'resp':
-                neural_df = process_resp_to_neural_df(sub_struct)
-                #print(neural_df)
-                # Add the neural data columns to the main data dictionary
-                #for col in neural_df.columns:
-                    #data[col] = neural_df[col]
+                neural_df = process_resp_to_neural_df(sub_struct)  # Process neural data
             else:
                 # Use the recursive function to extract all other fields
                 sub_struct_data = extract_struct_fields(sub_struct, sub_struct_name)
-                # Update the main data dictionary
                 data.update(sub_struct_data)
 
     # Convert the dictionary into a pandas DataFrame
     behav_df = pd.DataFrame(data)
-    time_column = None
-    if 'ti' in ts:
-        time_column = ts['ti']
-    elif 't' in ts:
-        time_column = ts['t']
+
+    # Handle time column
+    time_column = ts.get('ti', ts.get('t', None))
     if time_column is not None:
-        behav_df['time'] = time_column  # Add time to behav_df
-        neural_df['time'] = time_column  # Add time to neural_df
-    if 'odor' in ts:
-        odor = ts['odor']
-        behav_df['odor'] = odor  # Add time to df
-        behav_df['odor_state'] = behav_df['odor']>-1.5
-    else:
-        behav_df.rename(columns={'ball_yaw': 'odor'}, inplace=True)
-        behav_df['odor_state'] = behav_df['odor']>-1.5
+        behav_df['time'] = time_column
+        neural_df['time'] = time_column
+
+    # **Only add odor data if is_odor_trial is True**
+    if is_odor_trial:
+        if 'odor' in ts:
+            behav_df['odor'] = ts['odor']
+            behav_df['odor_state'] = behav_df['odor'] > -1.5
+        else:
+            behav_df.rename(columns={'ball_yaw': 'odor'}, inplace=True)
+            behav_df['odor_state'] = behav_df['odor'] > -1.5
+
     return behav_df, neural_df
 
 def rename_dataframe(df):
@@ -250,121 +277,6 @@ def rename_dataframe(df):
         df['heading_unjumped'] = df['heading_unjumped'] + np.pi
     
     return df
-
-
-def detect_circular_jumps(df, heading_col='heading', time_col='time', threshold=np.pi/2, 
-                          min_jump_time=60, max_jump_time=80):
-    """
-    Computes absolute circular differences, detects jumps, and checks if jumps occur within a valid time interval.
-
-    Parameters:
-        df (pd.DataFrame): DataFrame containing the heading column and optionally a time column.
-        heading_col (str): Name of the column containing the circular variable in radians.
-        time_col (str or None): Name of the column containing time values (optional).
-        threshold (float): Threshold in radians to detect significant jumps.
-        min_jump_time (float): Minimum allowed time interval between detected jumps.
-        max_jump_time (float): Maximum allowed time interval between detected jumps.
-
-    Returns:
-        pd.DataFrame: Modified DataFrame with 'absolute_circular_diff' and 'jump_detected' columns.
-        Prints warnings if detected jumps occur too frequently or too infrequently.
-    """
-    # Ensure the heading column exists
-    if heading_col not in df.columns:
-        raise ValueError(f"Column '{heading_col}' not found in DataFrame.")
-
-    # Compute absolute circular difference
-    circular_diff = np.abs(np.arctan2(
-        np.sin(np.diff(df[heading_col], prepend=df[heading_col].iloc[0])),
-        np.cos(np.diff(df[heading_col], prepend=df[heading_col].iloc[0]))
-    ))
-
-    # Detect jumps where circular difference exceeds threshold
-    jump_detected = (circular_diff > threshold).astype(int)
-
-    # Add results to DataFrame
-    df['absolute_circular_diff'] = circular_diff
-    df['jump_detected'] = jump_detected
-
-    # If time column is provided, check jump intervals
-    if time_col and time_col in df.columns:
-        jump_indices = df.index[df['jump_detected'] == 1].to_list()
-        time_values = df[time_col]
-
-        if len(jump_indices) > 1:  # Only check intervals if there are multiple jumps
-            jump_intervals = np.diff(time_values.iloc[jump_indices])
-
-            # Check if any interval is smaller than min_jump_time
-            if np.any(jump_intervals < min_jump_time):
-                print(f"Warning: Some jumps are happening too frequently (< {min_jump_time} time units). "
-                      f"Consider increasing the threshold ({threshold:.2f} rad).")
-
-            # Check if any interval is larger than max_jump_time
-            if np.any(jump_intervals > max_jump_time):
-                print(f"Warning: Some jumps are happening too infrequently (> {max_jump_time} time units). "
-                      f"Consider lowering the threshold ({threshold:.2f} rad).")
-
-    return df
-
-
-
-
-def make_df_behavior_new(df):
-    df['abssideV'] = np.abs(df['sideV'])
-    df['absyawV'] = np.abs(df['yawV'])
-    df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
-    in_notebook = is_notebook()
-    if in_notebook:
-        threshold = np.percentile(df.net_motion,5)
-    else:
-        threshold = plot_interactive_histogram(df.net_motion)
-    df['net_motion_state'] = (df['net_motion']>threshold).astype(int)
-    df['heading_adj'] = np.unwrap(df['heading'])
-    return df 
-
-def load_roiData_struct(path_to_folder):
-    # Construct the search pattern for files containing 'roiData_struct'
-    search_pattern = path_to_folder + '/*roiData_struct*.mat'
-    
-    # Use glob to find files matching the pattern
-    matching_files = glob.glob(search_pattern)
-    
-    # Assuming you want to load the first matching file
-    if matching_files:
-        # Load the first matching file found
-        try:
-            roi_data = scipy.io.loadmat(matching_files[0])
-        except NotImplementedError as e:
-        # If scipy.io.loadmat fails due to version incompatibility, try with mat73.loadmat
-            print(f"Loading with scipy.io failed: {e}. Trying with mat73.")
-            roi_data = mat73.loadmat(matching_files[0])
-        return roi_data
-    else:
-        print("No matching files found.")
-        return None
-
-def find_complete_trials(path_to_folder):
-    # List all .mat files in the folder
-    all_files = [f for f in os.listdir(path_to_folder) if f.endswith('.mat')]
-    
-    # Extract trial numbers from file names
-    trial_numbers = set()
-    for file_name in all_files:
-        match = re.search(r'trial(\d+)', file_name)
-        if match:
-            trial_numbers.add(int(match.group(1)))
-    
-    # Check for complete set of files for each trial
-    complete_trials = []
-    for trial_num in trial_numbers:
-        dff_path = os.path.join(path_to_folder, f'dff raw trial{trial_num}.mat')
-        preprocessed_path = os.path.join(path_to_folder, f'preprocessed_vars_ds trial{trial_num}.mat')
-        # Check if both required files exist
-        if os.path.exists(dff_path) and os.path.exists(preprocessed_path):
-            complete_trials.append(trial_num)
-    
-    # Return the list of complete trial numbers
-    return complete_trials
 
 def load_intermediate_mat(path_to_folder,trial_num):
     is_mat73 = 0
@@ -407,256 +319,26 @@ def load_intermediate_mat_new(path_to_folder,trial_num):
     roi_df = pd.DataFrame.from_dict(np.squeeze(roi_data['convertedStruct'],axis=1))
     return is_mat73, roi_df, dff_raw
 
-def plot_interactive_histogram(series):
-    fig, ax = plt.subplots()
-    counts, bins, patches = ax.hist(series, bins=30, color='skyblue', edgecolor='gray')
+def load_roiData_struct(path_to_folder):
+    # Construct the search pattern for files containing 'roiData_struct'
+    search_pattern = path_to_folder + '/*roiData_struct*.mat'
     
-    threshold_line = ax.axvline(color='r', linestyle='--')
-    threshold_value = [None]  # Use a list to store the threshold value
+    # Use glob to find files matching the pattern
+    matching_files = glob.glob(search_pattern)
     
-    def onclick(event):
-        # Event handler that draws a vertical line where the user clicks and updates threshold_value
-        threshold_line.set_xdata([event.xdata, event.xdata])
-        threshold_value[0] = event.xdata  # Update the threshold value
-        fig.canvas.draw()
-    
-    # Connect the click event to the handler
-    cid = fig.canvas.mpl_connect('button_press_event', onclick)
-    
-    plt.xlabel('Values')
-    plt.ylabel('Frequency')
-    plt.title('Interactive Histogram')
-    plt.show()
-    
-    return threshold_value[0]  # Return the updated list containing the threshold value
-
-
-def calculate_deltaF_over_F_df(df, fluorescence_columns, method='percentile', window_size=100, percentile=8):
-    """
-    Calculate deltaF/F for specified columns in a pandas DataFrame and add new columns with '_dff' appended to the names.
-
-    Args:
-    df (pd.DataFrame): The input DataFrame containing raw fluorescence time series.
-    fluorescence_columns (list): List of column names in the DataFrame representing raw fluorescence signals.
-    method (str): Method for calculating F0 ('median', 'mean', 'sliding_window', 'percentile', 'smooth'). Default is 'percentile'.
-    window_size (int): The size of the sliding window (used for 'sliding_window' and 'percentile' methods). Default is 100.
-    percentile (int): The percentile to use for the baseline calculation in 'percentile' method. Default is 8.
-
-    Returns:
-    pd.DataFrame: The input DataFrame with new columns appended containing deltaF/F values.
-    """
-    df = df.copy()  # To avoid modifying the original DataFrame
-
-    for col in fluorescence_columns:
-        fluorescence_series = df[col].values
-        
-        # Baseline calculation
-        if method == 'median':
-            F0 = np.median(fluorescence_series)
-        elif method == 'mean':
-            F0 = np.mean(fluorescence_series)
-        elif method == 'sliding_window':
-            F0 = np.array([np.mean(fluorescence_series[max(0, i-window_size):i]) for i in range(len(fluorescence_series))])
-        elif method == 'percentile':
-            F0 = np.array([np.percentile(fluorescence_series[max(0, i-window_size):i], percentile) for i in range(len(fluorescence_series))])
-        elif method == 'smooth':
-            F0 = gaussian_filter1d(fluorescence_series, sigma=window_size)
-        elif method == 'whole_session_percentile':
-            F0 = np.percentile(fluorescence_series, percentile)
-        else:
-            raise ValueError(f"Method {method} not recognized.")
-        
-        # Calculate deltaF/F
-        deltaF_over_F = (fluorescence_series - F0) / F0
-        
-        # Add new column to the DataFrame with '_dff' appended to the original column name
-        df[col + '_dff'] = deltaF_over_F
-
-    return df
-
-# Example Usage:
-# raw_fluorescence = np.array([...])  # your raw fluorescence time series
-# deltaF_F = calculate_deltaF_over_F(raw_fluorescence, method='percentile', window_size=100, percentile=10)
-# print(deltaF_F)
-
-
-def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9):
-    circum = ball_d * np.pi
-    df = pd.DataFrame()
-    # add dff_raw
-    dff_time = dff_raw['roiTime']
-    df['time'] = np.squeeze(dff_time)
-    df['fwV'] = np.squeeze(preprocessed_vars_ds['ftT_fwSpeedDown2']) # unit in mm/s
-    df['sideV'] = circum*np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2'])/(2*np.pi)
-    df['yawV'] = circum*np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2'])/(2*np.pi) # unit in mm/s
-    df['heading'] = np.squeeze(preprocessed_vars_ds['ftT_intHDDown2'])
-    df['abssideV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2']))/(2*np.pi)
-    df['absyawV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2']))/(2*np.pi)
-    df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
-    in_notebook = is_notebook()
-    if in_notebook:
-        threshold = np.percentile(df.net_motion,5)
+    # Assuming you want to load the first matching file
+    if matching_files:
+        # Load the first matching file found
+        try:
+            roi_data = scipy.io.loadmat(matching_files[0])
+        except NotImplementedError as e:
+        # If scipy.io.loadmat fails due to version incompatibility, try with mat73.loadmat
+            print(f"Loading with scipy.io failed: {e}. Trying with mat73.")
+            roi_data = mat73.loadmat(matching_files[0])
+        return roi_data
     else:
-        threshold = plot_interactive_histogram(df.net_motion)
-    df['net_motion_state'] = (df['net_motion']>threshold).astype(int)
-    df['heading_adj'] = np.unwrap(df['heading'])
-    if preprocessed_vars_odor != None:
-        odor_all = preprocessed_vars_odor['odorDown']
-        if len(odor_all) == 1:
-            df['odor'] = np.squeeze(odor_all)
-        elif len(odor_all) == len(df.time) and len(odor_all.shape) == 1:
-            df['odor'] = odor_all
-        else:
-            df['odor'] = odor_all[:,trial_num-1]
-    return df 
-
-#roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,1)
-#print(roi_df.head(5))
-#behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,1,ball_d = 9)
-#print(behav_df.head(5))
-
-def reconstruct_path(df, ball_d = 9):
-    circum = ball_d * np.pi #circumference of ball, in mm
-    mmPerDeg = circum / 360 # mm per degree of ball
-    fwdAngVel = df.fwV/mmPerDeg 
-    # zero heading
-    zeroedH = df.heading - df.heading[0]
-    time_bin = np.diff(df.time)
-    # movement in x (in degrees) at each time point
-    xChangePos = (fwdAngVel[0:-1]*time_bin)*np.sin(zeroedH[0:-1]) + (df.sideV[0:-1]*time_bin)*np.sin(zeroedH[0:-1]+np.pi/4)
-    xPos = (np.cumsum(xChangePos) - xChangePos[0])*mmPerDeg
-    yChangePos = (fwdAngVel[0:-1]*time_bin)*np.cos(zeroedH[0:-1]) + (df.sideV[0:-1]*time_bin)*np.cos(zeroedH[0:-1]+np.pi/4)
-    yPos = (np.cumsum(yChangePos) - yChangePos[0])*mmPerDeg
-    xPos_padded = pd.concat([xPos, pd.Series(xPos.iloc[-1])], ignore_index=True) 
-    yPos_padded = pd.concat([yPos, pd.Series(yPos.iloc[-1])], ignore_index=True) 
-    df['xPos'] = xPos_padded
-    df['yPos'] = yPos_padded
-    return xPos_padded, yPos_padded
-
-#xPos, yPos = reconstruct_path(behav_df, ball_d = 9)
-
-def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results,trial_num):
-    x_range = max(xPos) - min(xPos)
-    y_range = max(yPos) - min(yPos)
-    aspect_ratio = y_range / x_range
-
-    # Set figure dimensions based on data range while keeping unit scale the same
-    fig_width = 10  # Width of figure in inches
-    fig_height = fig_width * aspect_ratio  # Height is scaled according to the aspect ratio of the data
-
-    plt.figure(figsize=(fig_width, fig_height))
-
-    if label in behav_df.columns:
-        # If the label exists, color the scatter plot based on the label values
-        plt.scatter(xPos, yPos, c=behav_df[label], s=3)
-        plt.colorbar()  # Optionally, add a color bar to indicate the mapping of color to label values
-    else:
-        # If the label does not exist, plot a normal scatter plot without coloring
-        plt.scatter(xPos, yPos, s=3)
-        label = "nothing"
-    plt.scatter(0, 0, color='red')  # Mark the origin
-
-    # Enforce equal aspect ratio so that one unit in x is the same as one unit in y
-    plt.gca().set_aspect('equal', adjustable='box')
-
-    plt.xlabel('x position')
-    plt.ylabel('y position')
-    plt.title('Fly Trajectory')
-
-    # Save the plot
-    # Construct the full file path
-    file_path = os.path.join(example_path_results, f'fly_trajectory_colored_by_{label}_trial_{str(trial_num)}.png')
-
-    # Extract the directory path
-    dir_path = os.path.dirname(file_path)
-
-    # Check if the directory exists, and create it if it doesn't
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-    plt.savefig(file_path)
-    plt.close()  # Close the plot explicitly after saving to free resources
-
-def plot_fly_traj_interactive(xPos, yPos, behav_df, label, example_path_results, trial_num):
-    x_range = max(xPos) - min(xPos)
-    y_range = max(yPos) - min(yPos)
-    aspect_ratio = y_range / x_range
-
-    fig_width = 10
-    fig_height = fig_width * aspect_ratio
-
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-
-    if label in behav_df.columns:
-        scatter = ax.scatter(xPos, yPos, c=behav_df[label], s=3)
-        plt.colorbar(scatter)
-    else:
-        ax.scatter(xPos, yPos, s=3)
-        label = "nothing"
-    ax.scatter(0, 0, color='red')
-
-    ax.set_aspect('equal', adjustable='box')
-    ax.set_xlabel('x position')
-    ax.set_ylabel('y position')
-    ax.set_title('Fly Trajectory')
-
-    selected_points = []
-    line, = ax.plot([], [], 'ro-', linewidth=2, markersize=8)
-
-    def onclick(event):
-        if event.inaxes != ax:
-            return
-        selected_points.append((event.xdata, event.ydata))
-        x = [p[0] for p in selected_points]
-        y = [p[1] for p in selected_points]
-        line.set_data(x, y)
-        fig.canvas.draw()
-
-    def on_finish(event):
-        plt.close(fig)
-
-    fig.canvas.mpl_connect('button_press_event', onclick)
-
-    finish_ax = plt.axes([0.81, 0.05, 0.1, 0.075])
-    finish_button = Button(finish_ax, 'Finish')
-    finish_button.on_clicked(on_finish)
-
-    plt.show()
-
-    # Find indices of clicked points
-    clicked_indices = []
-    for point in selected_points:
-        distances = np.sqrt((xPos - point[0])**2 + (yPos - point[1])**2)
-        closest_index = np.argmin(distances)
-        clicked_indices.append(closest_index)
-
-    # Save the plot
-    file_path = os.path.join(example_path_results, f'fly_trajectory_colored_by_{label}_trial_{str(trial_num)}.png')
-    dir_path = os.path.dirname(file_path)
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-    plt.figure(figsize=(fig_width, fig_height))
-    if label in behav_df.columns:
-        plt.scatter(xPos, yPos, c=behav_df[label], s=3)
-        plt.colorbar()
-    else:
-        plt.scatter(xPos, yPos, s=3)
-    plt.scatter(0, 0, color='red')
-    plt.gca().set_aspect('equal', adjustable='box')
-    plt.xlabel('x position')
-    plt.ylabel('y position')
-    plt.title('Fly Trajectory')
-    for i, idx in enumerate(clicked_indices):
-        plt.plot(xPos[idx], yPos[idx], 'ro', markersize=8)
-        plt.text(xPos[idx], yPos[idx], f' {i+1}', fontsize=12, verticalalignment='bottom')
-    plt.savefig(file_path)
-    plt.close()
-
-    return clicked_indices
-
-#plot_fly_traj(xPos, yPos, behav_df,'odor', example_path_results)
-
-#clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
-#print("Indices of clicked points:", clicked_indices)
+        print("No matching files found.")
+        return None
 
 def get_roi_seq(roi_df):
     roi_df['trialNum'] = roi_df['trialNum'].apply(lambda x: x[0][0])
@@ -685,9 +367,6 @@ def get_roi_seq(roi_df):
     else:
         fr1_seq =  None 
     return np.array(roi_names), hdeltab_index, epg_index, fr1_index,hdeltab_seq, epg_seq,fr1_seq
-
-#roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence = get_roi_seq(roi_df)
-#print(hdeltab_sequence)
 
 def sort_rois(dff_tosort, roi_names, query_idx, query_seq):
     sorting_indices = np.argsort(query_seq)
@@ -733,32 +412,163 @@ def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, 
     # Drop these columns from the DataFrame
     neural_df.drop(columns=cols_to_drop, inplace=True)
     return neural_df
-#neural_df = make_df_neural(dff_raw,roi_names, hdeltab_index, epg_index, hdeltab_sequence, epg_sequence)
-#print(neural_df)
 
+def merge_dataframes(behav_df, neural_df, method='interp', tolerance=0.05):
+    """
+    Merges neural data onto behavioral data using either linear interpolation or nearest time matching.
 
-#def combine_df(behav_df, neural_df):
-    #return pd.merge(behav_df,neural_df,on="time")
+    Parameters:
+    -----------
+    behav_df : pd.DataFrame
+        DataFrame containing 'time' column and behavioral data.
+    neural_df : pd.DataFrame
+        DataFrame containing 'time' column and neural data.
+    method : str, optional
+        Method for merging:
+        - 'interp' (default): Uses linear interpolation to estimate neural data at exact behav_df['time'] points.
+        - 'nearest': Uses nearest available timestamp in neural_df within the given tolerance.
+    tolerance : float, optional
+        Maximum allowable time difference for nearest neighbor matching (only used for 'nearest' method).
+        
+    Returns:
+    --------
+    pd.DataFrame
+        Merged DataFrame with neural data aligned to behav_df['time'].
+    """
+    if method not in ['interp', 'nearest']:
+        raise ValueError("Invalid method. Choose 'interp' (interpolation) or 'nearest' (nearest matching).")
 
+    merged_df = behav_df.copy()
 
-def combine_df(behav_df, neural_df, tolerance=0.05):
-    # Ensure both time columns are of the same type (e.g., float64)
-    behav_df['time'] = behav_df['time'].astype('float64')
-    neural_df['time'] = neural_df['time'].astype('float64')
-    
-    # Use merge_asof to align based on nearest time match
-    merged_df = pd.merge_asof(behav_df, neural_df, on='time', tolerance=tolerance, direction='nearest')
+    if method == 'interp':
+        # Linear interpolation method
+        for col in neural_df.columns:
+            if col != 'time':  # Skip the 'time' column
+                merged_df[col] = np.interp(behav_df['time'], neural_df['time'], neural_df[col])
+
+    elif method == 'nearest':
+        # Ensure time columns are float for accurate merging
+        behav_df['time'] = behav_df['time'].astype(float)
+        neural_df['time'] = neural_df['time'].astype(float)
+        
+        # Use merge_asof to align based on nearest time match
+        merged_df = pd.merge_asof(behav_df, neural_df, on='time', tolerance=tolerance, direction='nearest')
 
     return merged_df
 
 
-#combined_df = combine_df(behav_df, neural_df)
-#print(combined_df.head(5))
+################################# Feature processing #################################
+
+# add basic behavioral neural features
+def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9):
+    circum = ball_d * np.pi
+    df = pd.DataFrame()
+    # add dff_raw
+    dff_time = dff_raw['roiTime']
+    df['time'] = np.squeeze(dff_time)
+    df['fwV'] = np.squeeze(preprocessed_vars_ds['ftT_fwSpeedDown2']) # unit in mm/s
+    df['sideV'] = circum*np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2'])/(2*np.pi)
+    df['yawV'] = circum*np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2'])/(2*np.pi) # unit in mm/s
+    df['heading'] = np.squeeze(preprocessed_vars_ds['ftT_intHDDown2'])
+    df['abssideV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2']))/(2*np.pi)
+    df['absyawV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2']))/(2*np.pi)
+    df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
+    in_notebook = is_notebook()
+    if in_notebook:
+        threshold = np.percentile(df.net_motion,5)
+    else:
+        threshold = plot_interactive_histogram(df.net_motion)
+    df['net_motion_state'] = (df['net_motion']>threshold).astype(int)
+    df['heading_adj'] = np.unwrap(df['heading'])
+    if preprocessed_vars_odor != None:
+        odor_all = preprocessed_vars_odor['odorDown']
+        if len(odor_all) == 1:
+            df['odor'] = np.squeeze(odor_all)
+        elif len(odor_all) == len(df.time) and len(odor_all.shape) == 1:
+            df['odor'] = odor_all
+        else:
+            df['odor'] = odor_all[:,trial_num-1]
+        df['odor_state'] = (df['odor'] > 0.5).astype(int)
+    return df 
+
+def make_df_behavior_new(df):
+    df['abssideV'] = np.abs(df['sideV'])
+    df['absyawV'] = np.abs(df['yawV'])
+    df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
+    in_notebook = is_notebook()
+    if in_notebook:
+        threshold = np.percentile(df.net_motion,5)
+    else:
+        threshold = plot_interactive_histogram(df.net_motion)
+    df['net_motion_state'] = (df['net_motion']>threshold).astype(int)
+    #df['heading_adj'] = np.unwrap(df['heading'])
+    return df 
+
+def calculate_deltaF_over_F_df(df, fluorescence_columns, method='percentile', window_size=100, percentile=8):
+    """
+    Calculate deltaF/F for specified columns in a pandas DataFrame and add new columns with '_dff' appended to the names.
+
+    Args:
+    df (pd.DataFrame): The input DataFrame containing raw fluorescence time series.
+    fluorescence_columns (list): List of column names in the DataFrame representing raw fluorescence signals.
+    method (str): Method for calculating F0 ('median', 'mean', 'sliding_window', 'percentile', 'smooth'). Default is 'percentile'.
+    window_size (int): The size of the sliding window (used for 'sliding_window' and 'percentile' methods). Default is 100.
+    percentile (int): The percentile to use for the baseline calculation in 'percentile' method. Default is 8.
+
+    Returns:
+    pd.DataFrame: The input DataFrame with new columns appended containing deltaF/F values.
+    """
+    df = df.copy()  # To avoid modifying the original DataFrame
+
+    for col in fluorescence_columns:
+        fluorescence_series = df[col].values
+        
+        # Baseline calculation
+        if method == 'median':
+            F0 = np.median(fluorescence_series)
+        elif method == 'mean':
+            F0 = np.mean(fluorescence_series)
+        elif method == 'sliding_window':
+            F0 = np.array([np.mean(fluorescence_series[max(0, i-window_size):i]) for i in range(len(fluorescence_series))])
+        elif method == 'percentile':
+            F0 = np.array([np.percentile(fluorescence_series[max(0, i-window_size):i], percentile) for i in range(len(fluorescence_series))])
+        elif method == 'smooth':
+            F0 = gaussian_filter1d(fluorescence_series, sigma=window_size)
+        elif method == 'whole_session_percentile':
+            F0 = np.percentile(fluorescence_series, percentile)
+        else:
+            raise ValueError(f"Method {method} not recognized.")
+        
+        # Calculate deltaF/F
+        deltaF_over_F = (fluorescence_series - F0) / F0
+        
+        # Add new column to the DataFrame with '_dff' appended to the original column name
+        df[col + '_dff'] = deltaF_over_F
+
+    return df
+
+def apply_gaussian_smoothing_to_df(df, columns, sigma):
+    """
+    Applies Gaussian smoothing to specified columns in a pandas DataFrame.
+
+    Parameters:
+    - df: The pandas DataFrame containing the data.
+    - columns: List of column names to apply Gaussian smoothing to.
+    - sigma: Standard deviation for Gaussian kernel, controlling the smoothing degree.
+    
+    Returns:
+    - A pandas DataFrame with the smoothed columns added as new columns with suffix '_smoothed'.
+    """
+    for column in columns:
+        if column in df.columns:
+            smoothed_column = apply_gaussian_smoothing(df[column], sigma)
+            df[f'{column}_smoothed'] = smoothed_column
+    return df
 
 def apply_gaussian_smoothing(series, sigma):
     """
     Applies Gaussian smoothing to a pandas Series.
-    
+
     Parameters:
     - series: The pandas Series to smooth.
     - sigma: Standard deviation for Gaussian kernel, controlling the smoothing degree.
@@ -777,50 +587,147 @@ def apply_gaussian_smoothing(series, sigma):
     
     return smoothed_series
 
+def reconstruct_path(df, ball_d=9):
+    """
+    Reconstructs the movement path of an object based on forward and side velocities.
 
-def calc_nonpara(combined_df, roi_kw,roi_kw2, roi_mtx=None, do_truncate=False):
+    Args:
+        df (pd.DataFrame): DataFrame containing 'fwV' (forward velocity), 'sideV' (side velocity),
+                           'heading' (direction in radians), and 'time'.
+        ball_d (float): Diameter of the ball (in mm), used for movement calculations.
+
+    Returns:
+        pd.DataFrame: Updated DataFrame with 'xPos' and 'yPos' columns.
+    """
+    circum = ball_d * np.pi  # Circumference of ball in mm
+    mmPerDeg = circum / 360  # mm per degree of ball movement
+    
+    fwdAngVel = df.fwV / mmPerDeg  # Convert forward velocity to angular velocity
+    zeroedH = df.heading - df.heading.iloc[0]  # Zero out heading relative to the first entry
+    time_bin = np.diff(df.time)  # Time differences between consecutive frames
+
+    # Compute x and y position changes
+    xChangePos = (fwdAngVel[:-1] * time_bin) * np.sin(zeroedH[:-1]) + (df.sideV[:-1] * time_bin) * np.sin(zeroedH[:-1] + np.pi/4)
+    yChangePos = (fwdAngVel[:-1] * time_bin) * np.cos(zeroedH[:-1]) + (df.sideV[:-1] * time_bin) * np.cos(zeroedH[:-1] + np.pi/4)
+
+    # Integrate positions
+    xPos = (np.cumsum(xChangePos) - xChangePos[0]) * mmPerDeg
+    yPos = (np.cumsum(yChangePos) - yChangePos[0]) * mmPerDeg
+
+    # Pad to maintain DataFrame length
+    xPos_padded = pd.concat([xPos, pd.Series(xPos.iloc[-1])], ignore_index=True) 
+    yPos_padded = pd.concat([yPos, pd.Series(yPos.iloc[-1])], ignore_index=True) 
+
+    # Store in DataFrame
+    df['xPos'] = xPos_padded
+    df['yPos'] = yPos_padded
+
+    return df  # Return updated DataFrame
+
+
+# jump related features
+
+def detect_local_peaks(df, init_t, prominence=0.1, min_time_gap=60):
+    """
+    Detects local peaks in the 'absolute_circular_diff' column after init_t, ensuring they are at least 60s apart.
+
+    Parameters:
+        df (DataFrame): Input DataFrame with 'time' and 'absolute_circular_diff' columns.
+        init_t (float): Initial time threshold, only detect peaks after this time.
+        prominence (float): Minimum prominence of peaks.
+        min_time_gap (float): Minimum time gap between detected peaks in seconds.
+
+    Returns:
+        DataFrame: Updated DataFrame with a new binary column 'jump_detected' marking peak locations.
+    """
+    # Filter data after init_t
+    df_filtered = df[df["time"] > init_t]
+
+    # Extract time and data column
+    time_values = df_filtered["time"].values
+    signal_values = df_filtered["absolute_circular_diff"].values
+
+    # Compute time-based distance in number of samples
+    avg_sampling_interval = np.mean(np.diff(time_values))  # Estimate the sampling interval
+    min_samples_gap = int(min_time_gap / avg_sampling_interval)  # Convert time to sample count
+
+    # Find peaks with prominence and minimum sample gap
+    peaks, properties = find_peaks(signal_values, prominence=prominence, distance=min_samples_gap)
+
+    # Map peak indices back to original DataFrame indices
+    peak_indices = df_filtered.index[peaks]
+
+    # Create a new column for peak detection, initialized to 0
+    df["jump_detected"] = 0
+    df.loc[peak_indices, "jump_detected"] = 1
+
+    return df
+
+def compute_absolute_circular_diff(df, heading_col='heading'):
+    """
+    Computes absolute circular differences in the specified heading column.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing the heading column.
+        heading_col (str): Name of the column containing the circular variable in radians.
+
+    Returns:
+        pd.DataFrame: Modified DataFrame with 'absolute_circular_diff' column.
+    """
+    # Ensure the heading column exists
+    if heading_col not in df.columns:
+        raise ValueError(f"Column '{heading_col}' not found in DataFrame.")
+
+    # Compute absolute circular difference
+    circular_diff = np.abs(np.arctan2(
+        np.sin(np.diff(df[heading_col], prepend=df[heading_col].iloc[0])),
+        np.cos(np.diff(df[heading_col], prepend=df[heading_col].iloc[0]))
+    ))
+
+    # Add results to DataFrame
+    df['absolute_circular_diff'] = circular_diff
+    
+    return df
+
+# FB population imaging related processing
+
+def calc_nonpara(combined_df, roi_kw, roi_kw2, roi_mtx=None, do_truncate=False):
     if do_truncate:
-        combined_df = combined_df[(combined_df["fwV"]>0.2) | (combined_df["fwV"]<-0.2)]
+        combined_df = combined_df[(combined_df["fwV"] > 0.2) | (combined_df["fwV"] < -0.2)]
+    
     sigma = 5
-    smooth_fwV = apply_gaussian_smoothing(combined_df.fwV, sigma)
-    smooth_sideV = apply_gaussian_smoothing(combined_df.sideV, sigma)
-    translational_speed = np.sqrt(smooth_fwV**2+smooth_sideV**2)
+    
+    # Assuming smoothed columns already exist in the dataframe
+    smooth_fwV = combined_df.get('fwV_smoothed', apply_gaussian_smoothing(combined_df.fwV, sigma))
+    smooth_sideV = combined_df.get('sideV_smoothed', apply_gaussian_smoothing(combined_df.sideV, sigma))
+    
+    translational_speed = np.sqrt(smooth_fwV**2 + smooth_sideV**2)
     forward_speed = np.abs(smooth_fwV)
+    
     if roi_mtx is None:
         if roi_kw2:
             filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 not in col]
             neural_df_rois = combined_df[filtered_columns]
         else:
             neural_df_rois = combined_df[[col for col in combined_df.columns if roi_kw.lower() in col.lower()]]
+        
         row_means = neural_df_rois.apply(np.mean, axis=1)
-    
         row_iqrs = neural_df_rois.apply(lambda x: iqr(x, interpolation='midpoint'), axis=1)
     else:
         row_means = np.mean(roi_mtx, axis=1)
-        row_iqrs = iqr(roi_mtx,interpolation='midpoint',axis=1)
+        row_iqrs = iqr(roi_mtx, interpolation='midpoint', axis=1)
     
     # Combine mean and IQR into a new DataFrame
-    stats_df = pd.DataFrame({'Mean': row_means, 'IQR': row_iqrs, 'translationalV': translational_speed, 'fwV':forward_speed})
+    stats_df = pd.DataFrame({'Mean': row_means, 'IQR': row_iqrs, 'translationalV': translational_speed, 'fwV': forward_speed})
+    
+    # Save stats to the original dataframe with unique column names
+    combined_df['mean_stat'] = row_means
+    combined_df['iqr_stat'] = row_iqrs
+    combined_df['translational_speed'] = translational_speed
+    combined_df['forward_speed'] = forward_speed
     
     return combined_df, stats_df
 
-#nonpara_summ_df = calc_nonpara(combined_df)
-#print(nonpara_summ_df)
-
-def nonpara_plot_bybehav(nonpara_summ_df, combined_df, behavior_var, example_path_results, trial_num):
-    plt.figure(figsize=(6, 6))
-    plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= combined_df[behavior_var])
-    plt.colorbar()
-    plt.xlabel('mean')
-    plt.ylabel('iqr')
-    plt.title('mean vs. amplitude')
-
-    # Save the plot
-    plt.savefig(example_path_results+'mean_amp_' + behavior_var + str(trial_num) +'.png')
-    plt.close()  # Close the plot explicitly after saving to free resources
-
-#behavior_var = 'translationalV'
-#nonpara_plot_bybehav(nonpara_summ_df, behavior_var)
 
 def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num):
     if roi_kw2:
@@ -844,7 +751,6 @@ def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, tri
         plt.close()  # Close the plot explicitly after saving to free resources
     return roi_mtx
 
-#roi_mtx = extract_heatmap(combined_df, "hDeltaB", True)
 
 # for EPG type imaging only 
 def calculate_pva_epg(activity_matrix):
@@ -926,152 +832,8 @@ def fit_sinusoid(neural_df, roi_mtx):
     # Merge paramfit_df onto neural_df based on 'time'
     merged_df = neural_df.merge(paramfit_df, on='time', how='left')
 
-    return merged_df
+    return merged_df, paramfit_df
 
-
-#paramfit_df = fit_sinusoid(neural_df, roi_mtx)
-#print(paramfit_df.head(5))
-
-def plot_with_error_shading(df, example_path_results,trial_num):
-    # Set up the figure and subplots
-    fig, axs = plt.subplots(3, 1, figsize=(15, 10))
-    
-    # Plot phase
-    axs[0].plot(df['time'], df['phase'], label='Phase', color = 'orange')
-    phase_error_threshold = np.percentile(df['phase_error'], 90)
-    high_error_times = df['time'][df['phase_error'] > phase_error_threshold]
-    for time in high_error_times:
-        axs[0].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
-    axs[0].set_title('Phase')
-    axs[0].set_xlabel('Time')
-    axs[0].set_ylabel('Phase')
-    
-    # Plot amplitude
-    axs[1].plot(df['time'], df['amplitude'], label='Amplitude',color = 'red')
-    amp_error_threshold = np.percentile(df['amplitude_error'], 90)
-    high_error_times = df['time'][df['amplitude_error'] > amp_error_threshold]
-    for time in high_error_times:
-        axs[1].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
-    axs[1].set_title('Amplitude')
-    axs[1].set_xlabel('Time')
-    axs[1].set_ylabel('Amplitude')
-
-    # Plot baseline
-    axs[2].plot(df['time'], df['baseline'], label='Baseline', color = 'green')
-    base_error_threshold = np.percentile(df['baseline_error'], 90)
-    high_error_times = df['time'][df['baseline_error'] > base_error_threshold]
-    for time in high_error_times:
-        axs[2].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
-    axs[2].set_title('Baseline')
-    axs[2].set_xlabel('Time')
-    axs[2].set_ylabel('Baseline')
-
-    plt.tight_layout()
-    plt.savefig(example_path_results+'parametric_fit' + str(trial_num) +'.png')
-    plt.close()  # Close the plot explicitly after saving to free resources
-
-#plot_with_error_shading(paramfit_df)
-
-def fit_nonparametric(roi_mtx):
-    #use iqr as a proxy of height
-    bump_height = iqr(roi_mtx, axis=1)
-    #bump phase TODO 
-    #bump_phase = 
-    # level of flourescence at 50% 
-    threshold = np.percentile(roi_mtx, 50, axis = 1)
-    mean_hDeltaB = np.mean(roi_mtx, axis=1)
-    # width TODO
-    return bump_height, threshold, mean_hDeltaB
-
-# post scopa analysis 
-
-def load_tif_images(tif_path):
-    img = Image.open(tif_path)
-    images = []
-    for i in range(img.n_frames):
-        img.seek(i)
-        images.append(img.copy())
-    return images
-
-def generate_plots(df, variable_name, plot_width, plot_height, window_size=50, dpi=100):
-    plots = []
-    for i in range(len(df)):
-        # Create a figure with specified size and DPI
-        fig, ax = plt.subplots(figsize=(plot_width, plot_height), dpi=dpi)
-        
-        # Determine the range for the moving window
-        start_range = max(0, i - window_size)
-        end_range = i
-
-        # Plot the data within the moving window
-        ax.plot(df[variable_name][start_range:end_range])
-        ax.set_xlim(start_range, end_range)
-        
-        # Set other plot properties as needed
-        fig.canvas.draw()
-
-        # Convert plot to grayscale image
-        img = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
-        img = img.reshape(fig.canvas.get_width_height()[::-1] + (4,))
-        img_gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
-        plots.append(img_gray)
-        plt.close(fig)
-    return plots
-
-
-# plottings 
-def pairwise_corr(df,height,width):
-    fig, ax = plt.subplots(figsize = (height, width))
-    sns.pairplot(df, ax = ax)
-
-def phase_plot(df,height,width,ind_l, ind_h):
-    fig, ax = plt.subplots(figsize = (height, width))
-    ax.scatter(df.time[ind_l:ind_h], df.heading[ind_l:ind_h],color='blue', alpha = 0.5)
-    ax.plot(df.time,2*np.pi-df['phase_sinfit'], color = 'orange')
-
-
-def plot_time_series(neural_df, behav_df,example_path_results,trial_num):
-    neural_columns = len(neural_df.columns.drop('time'))
-    behav_columns = len(['fwV', 'yawV', 'sideV', 'heading'])
-    total_plots = neural_columns + behav_columns
-    
-    # Create a figure with subplots
-    fig, axs = plt.subplots(total_plots, 1, figsize=(12, 3 * total_plots), sharex=True)
-    
-    # Plot each column from neural_df as a subplot
-    for i, column in enumerate(neural_df.columns.drop('time')):
-        axs[i].plot(neural_df['time'], neural_df[column], label=column)
-        axs[i].set_ylabel(column)
-        axs[i].legend(loc='upper right')
-    
-    # Plot specified columns from behav_df as subplots
-    behav_columns = ['fwV', 'yawV', 'sideV', 'heading']
-    for j, column in enumerate(behav_columns, start=neural_columns):
-        if column in behav_df.columns:
-            axs[j].plot(behav_df['time'], behav_df[column], label=column, linestyle='--')
-            axs[j].set_ylabel(column)
-            axs[j].legend(loc='upper right')
-    
-    # Check if 'odor' column exists and shade where odor > 5
-    if 'odor' in behav_df.columns:
-        odor_mask = behav_df['odor'] > 5
-        # Apply shading to all subplots
-        for ax in axs:
-            ax.fill_between(behav_df['time'], ax.get_ylim()[0], ax.get_ylim()[1], where=odor_mask, color='red', alpha=0.3, transform=ax.get_xaxis_transform())
-    
-    # Set common labels
-    plt.xlabel('Time')
-    fig.suptitle('Neural and Behavioral Data Over Time', fontsize=16)
-    
-    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout to make room for the suptitle
-    
-    plt.savefig(example_path_results+'time_series_plotting' + str(trial_num) +'.png')
-    plt.close()  # Close the plot explicitly after saving to free resources
-
-#########################################################################
-# tuning curves 
-
-# Creating a circular histogram
 def calc_circu_stats(circu_var,num_bins,example_path_results,trial_num):
     fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
     # Histogram with 30 bins
@@ -1098,123 +860,6 @@ def calc_circu_stats(circu_var,num_bins,example_path_results,trial_num):
     mode_angle = (bins[max_bin_index] + bins[max_bin_index + 1]) / 2
 
     return mean_angle, median_angle, mode_angle
-#mean_angle, median_angle, mode_angle = calc_circu_stats(behav_df.heading,30)
-def plot_scatter(behavior_variable, filtered_columns, neural_activity, neurons_to_plot, num_bins=None, ax=None):
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
-    for j in neurons_to_plot:
-        #print(len(behavior_variable))
-        ax.scatter(behavior_variable,neural_activity[j,:])
-        ax.set_ylabel(filtered_columns[j])
-    ax.set_xlabel(behavior_variable.name)
-    #ax[j,i].legend()
-    #plt.tight_layout()
-
-def tuning_curve_1d(behavior_variable, filtered_columns, neural_activity, neurons_to_plot, num_bins, ax=None):
-    """
-    Plot tuning curves on the given matplotlib Axes.
-
-    Parameters:
-    - behavior_variable: array-like, the behavioral variable to bin.
-    - neural_activity: 2D array-like, neural activity data with shape (neurons, observations).
-    - neurons_to_plot: list of int, indices of neurons to plot.
-    - num_bins: int, number of bins to divide the behavior variable into.
-    - ax: matplotlib.axes.Axes, the axes object to plot on. If None, a new figure is created.
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Bin the behavioral variable
-    bins = np.linspace(np.min(behavior_variable), np.max(behavior_variable), num_bins+1)
-    bin_centers = 0.5 * (bins[1:] + bins[:-1])
-
-    # Plot tuning curves with SEM for selected neurons
-    for neuron_index in neurons_to_plot:
-        binned_activity = np.empty(num_bins)
-        binned_sem = np.empty(num_bins)
-        
-        for i in range(num_bins):
-            indices = np.where((behavior_variable >= bins[i]) & (behavior_variable < bins[i+1]))[0]
-            bin_data = neural_activity[neuron_index, indices]
-            binned_activity[i] = np.mean(bin_data)
-            binned_sem[i] = sem(bin_data)
-
-        ax.plot(bin_centers, binned_activity, label=f'{filtered_columns[neuron_index]}')
-        ax.fill_between(bin_centers, binned_activity - binned_sem, binned_activity + binned_sem, alpha=0.3)
-        ax.set_ylabel(filtered_columns[neuron_index])
-
-    # Setting labels and title
-    ax.set_xlabel(behavior_variable.name)
-    #ax.set_ylabel('Average Neural Activity')
-    #ax.legend()
-    #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
-    #plt.close()  # Close the plot explicitly after saving to free resources
-
-# Example usage:
-# fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(20, 6))
-# for i, ax in enumerate(axs):
-#     tuning_curve_1d(behavior_variable, neural_activity, [i], 10, ax=ax)
-# plt.show()
-
-def tuning_heatmap_2d(behavior_var1, behavior_var2, filtered_columns, neural_activity, neurons_to_plot, num_bins, example_path_results, trial_num, ax=None):
-    """
-    Plot a 2D tuning heatmap on the given matplotlib Axes.
-
-    Parameters:
-    - behavior_var1: array-like, the first behavioral variable to bin (x-axis).
-    - behavior_var2: array-like, the second behavioral variable to bin (y-axis).
-    - filtered_columns: list of str, names of the neurons.
-    - neural_activity: 2D array-like, neural activity data with shape (neurons, observations).
-    - neuron_to_plot: int, index of the neuron to plot.
-    - num_bins: int, number of bins to divide each behavior variable into.
-    - ax: matplotlib.axes.Axes, the axes object to plot on. If None, a new figure is created.
-
-    Returns:
-    - fig: matplotlib.figure.Figure, the figure object containing the plot.
-    - ax: matplotlib.axes.Axes, the axes object containing the plot.
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 8))
-    else:
-        fig = ax.figure
-
-    # Bin the behavioral variables
-    bins1 = np.linspace(np.min(behavior_var1), np.max(behavior_var1), num_bins+1)
-    bins2 = np.linspace(np.min(behavior_var2), np.max(behavior_var2), num_bins+1)
-    
-    # Create a 2D array to store binned activity
-    binned_activity = np.zeros((num_bins, num_bins))
-    
-    # Bin the data and calculate mean activity
-    for i in range(num_bins):
-        for j in range(num_bins):
-            indices = np.where(
-                (behavior_var1 >= bins1[i]) & (behavior_var1 < bins1[i+1]) &
-                (behavior_var2 >= bins2[j]) & (behavior_var2 < bins2[j+1])
-            )[0]
-            binned_activity[j, i] = np.mean(neural_activity[neurons_to_plot, indices])
-    
-    # Create the heatmap
-    im = ax.imshow(binned_activity, origin='lower', aspect='auto', cmap='viridis')
-    
-    # Add colorbar
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label(f'Mean activity of {filtered_columns[neurons_to_plot]}')
-    
-    # Set labels and title
-    ax.set_xlabel(behavior_var1.name)
-    ax.set_ylabel(behavior_var2.name)
-    #ax.set_title(f'2D Tuning Heatmap for {filtered_columns[neuron_to_plot]}')
-    
-    # Set tick labels
-    ax.set_xticks(np.linspace(0, num_bins-1, 5))
-    ax.set_yticks(np.linspace(0, num_bins-1, 5))
-    ax.set_xticklabels([f'{x:.2f}' for x in np.linspace(np.min(behavior_var1), np.max(behavior_var1), 5)])
-    ax.set_yticklabels([f'{y:.2f}' for y in np.linspace(np.min(behavior_var2), np.max(behavior_var2), 5)])
-    save_path = f"{example_path_results}_{behavior_var1.name}_{behavior_var2.name}_heatmap_{trial_num}.png"
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    #print(f"Figure saved to {save_path}")
-    return fig, ax
 
 def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     """
@@ -1262,60 +907,6 @@ def filter_based_on_histogram(behavior_variable, min_freq_threshold):
     filtered_variable = behavior_variable[(behavior_variable >= lower_cutoff) & (behavior_variable <= upper_cutoff)]
     
     return filtered_variable
-
-def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, segment_by_dir, segment_by_block, segment_id = None):
-    def generate_plots(neurons_to_plot, neural_activity, filtered_columns, behavior_variables, plot_func, ax, is_filtered=False):
-        for j in neurons_to_plot:
-            for i, behavior_variable in enumerate(behavior_variables):
-                plot_func(behavior_variable, filtered_columns, neural_activity, [j], num_bins if is_filtered else None, ax=ax[j, i])
-                if is_filtered and i == 3:
-                    ax[j, i].axvline(mean_angle, color='red', label='mean heading')
-                    ax[j, i].axvline(mode_angle, linestyle='--', color='red', label='mode heading')
-                    ax[j, i].legend()
-
-    neurons = neurons_to_plot if neural_activity.shape[0] > 1 else [0]
-
-    # First set of plots (tuning curves)
-    fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
-    if len(ax.shape) == 1:
-        ax = ax[np.newaxis, :]
-    generate_plots(neurons, neural_activity, filtered_columns, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
-    plt.tight_layout()
-    if segment_by_dir:
-        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}_segment_{segment_id}.png")
-    elif segment_by_block: 
-        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}_block_{segment_id}.png")
-    else: 
-        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}.png")
-    plt.close()
-
-    # Second set of plots (scatter plots)
-    fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
-    if len(ax.shape) == 1:
-        ax = ax[np.newaxis, :]
-    generate_plots(neurons, neural_activity, filtered_columns, behavioral_variables, plot_scatter, ax)
-    plt.tight_layout()
-    if segment_by_dir:
-        plt.savefig(f"{example_path_results}scatterplot_{trial_num}_segment_{segment_id}.png")
-    elif segment_by_block: 
-        plt.savefig(f"{example_path_results}scatterplot_{trial_num}_block_{segment_id}.png")
-    else: 
-        plt.savefig(f"{example_path_results}scatterplot_{trial_num}.png")
-    plt.close()
-
-    # forwardV vs.heading heatmap
-
-
-    # plot forwardV vs. heading as sanity check
-    fig, ax = plt.subplots(figsize=(5,5))
-    generate_plots([0], np.array([behavioral_variables[0]]), [filtered_behavior_variables[0].name], [filtered_behavior_variables[3]], tuning_curve_1d, np.array([[ax]]), is_filtered=True)
-    plt.tight_layout()
-    plt.savefig(f"{example_path_results}1d_tuning_curve_ctrl_{trial_num}.png")
-    plt.close()
-
-
-# Example usage:
-#tuning_curve_1d(behavior_variable, neural_activity,neurons_to_plot,num_bins)
 
 
 def calculate_theta_g_rho(df, window_size=30, speed_threshold=0.67, cue_jump_time=5):
@@ -1369,176 +960,93 @@ def calculate_theta_g_rho(df, window_size=30, speed_threshold=0.67, cue_jump_tim
     
     return df
 
-
-def circular_mode(data, bins=360):
-    """Calculate the circular mode of the given data."""
-    #data_rad = np.deg2rad(data)
-    density = gaussian_kde(data)
-    x = np.linspace(0, 2*np.pi, bins)
-    y = density(x)
-    peaks, _ = find_peaks(y)
-    mode_idx = peaks[np.argmax(y[peaks])]
-    return x[mode_idx]
-
-
-
-
-def plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, segment_column='block'):
+def circular_mode(circular_data, method='kde', bins=360, num_bins=30):
     """
-    Plot heading tuning for different segments of a time series for multiple neurons.
-    
+    Calculate the mode angle of circular data using either Kernel Density Estimation (KDE) or histogram binning.
+
     Parameters:
-    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment' (or 'block')
-    - neural_df: DataFrame containing neural data
-    - unique_seg: List of unique segment numbers to plot
-    - filtered_columns: List of neuron column names to plot
-    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
-    - segment_column: Column name in behav_df to use for segmenting the data ('segment' or 'block')
-    """
-    n_neurons = len(filtered_columns)
-    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
-    
-    # If there's only one neuron, axes will not be an array, so we convert it to a single-element list
-    if n_neurons == 1:
-        axes = [axes]
-    
-    # Define a color cycle for different segments
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
+    -----------
+    circular_data : array-like
+        Array of angles in radians, expected to be in range [0, 2π].
+    method : str, optional
+        Method to use for calculating the mode. Options:
+        - 'kde' (default) : Uses Kernel Density Estimation (KDE).
+        - 'histogram' : Uses histogram binning.
+    bins : int, optional
+        Number of bins for KDE estimation (default: 360).
+    num_bins : int, optional
+        Number of bins for histogram binning (default: 30).
 
-    # Calculate circular mode headings if not provided
-    if unique_mode_headings is None:
-        unique_mode_headings = []
-        for seg in unique_seg:
-            mask = behav_df[segment_column] == seg
-            headings = behav_df.loc[mask, 'heading'].values
-            mode_heading = circular_mode(headings)
-            unique_mode_headings.append(mode_heading)
-
-    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
-        # Plot each segment
-        for i, seg in enumerate(unique_seg):
-            mask = behav_df[segment_column] == seg  # Use the specified column ('segment' or 'block') for masking
-            ax.scatter(behav_df.loc[mask, 'heading'], neural_df.loc[mask, neuron], 
-                       color=colors[i], alpha=0.1, label=f'Segment {seg}')
-        
-        ax.set_theta_zero_location('N')
-        ax.set_theta_direction(-1)
-        
-        ax.set_title(f"{neuron}")
-        if ax_idx == 0:  # Only set ylabel for the first subplot
-            ax.set_ylabel("Neural Activity")
-        
-        # Plot mode headings
-        for i, mode_hd in enumerate(unique_mode_headings):
-            ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], color=colors[i % len(colors)], 
-                    linewidth=2, linestyle='--', label=f'Mode {i+1}')
-        
-        if ax_idx == n_neurons - 1:  # Only add legend to the last subplot
-            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
-    
-    plt.tight_layout()
-    
-    # Save the figure
-    plt.savefig(f"{example_path_results}scatter_segment_circular_{trial_num}.png", dpi=300, bbox_inches='tight')
-
-
-# Example usage:
-# filtered_columns = ['MBON09L', 'MBON10L', 'MBON11L']
-# unique_seg = [0, 1, 2]
-# plot_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, unique_mode_headings=[mode_hd, mode_hd2])
-
-
-
-def binned_stats(headings, values, bins):
-    """
-    Calculate binned averages and standard errors.
-    
-    Parameters:
-    - headings: array of angular data (in radians).
-    - values: corresponding values (e.g., MBON09L) to be averaged.
-    - bins: number of bins or a list of bin edges for angular data.
-    
     Returns:
-    - bin_centers: array of bin centers (in radians).
-    - bin_means: array of mean values for each bin.
-    - bin_errors: array of standard errors for each bin.
+    --------
+    float
+        Mode angle in radians.
     """
-    binned, bin_edges = pd.cut(headings, bins=bins, labels=False, retbins=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    if method == 'kde':
+        # Kernel Density Estimation method
+        density = gaussian_kde(circular_data)
+        x = np.linspace(0, 2*np.pi, bins)  # Range from 0 to 2π
+        y = density(x)
+        peaks, _ = find_peaks(y)
+        if len(peaks) == 0:
+            return None  # No peaks found
+        mode_idx = peaks[np.argmax(y[peaks])]
+        return x[mode_idx]
 
-    bin_means = []
-    bin_errors = []
-    for i in range(len(bin_edges) - 1):
-        bin_values = values[binned == i]
-        bin_means.append(np.mean(bin_values))
-        bin_errors.append(np.std(bin_values) / np.sqrt(len(bin_values)))
+    elif method == 'histogram':
+        # Histogram binning method
+        n, bin_edges = np.histogram(circular_data, bins=num_bins, range=(0, 2*np.pi))
+        max_bin_index = np.argmax(n)
+        mode_angle = (bin_edges[max_bin_index] + bin_edges[max_bin_index + 1]) / 2
+        return mode_angle
 
-    return bin_centers, np.array(bin_means), np.array(bin_errors)
+    else:
+        raise ValueError("Invalid method. Choose 'kde' or 'histogram'.")
 
 
-
-def plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, n_bins=16, segment_column='block'):
+def calc_segment_modes_filtered_v2(df, heading_col='heading', segment_col='block', 
+                                motion_col='net_motion', motion_threshold=1, num_bins=30):
     """
-    Plot binned heading tuning for different segments of a time series for multiple neurons.
+    Calculate the mode heading for each segment in the trajectory after filtering by net motion threshold.
     
     Parameters:
-    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment' (or 'block')
-    - neural_df: DataFrame containing neural data
-    - unique_seg: List of unique segment numbers to plot
-    - filtered_columns: List of neuron column names to plot
-    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
-    - n_bins: Number of bins for circular data (default 16)
-    - segment_column: Column name in behav_df to use for segmenting the data ('segment' or 'block')
+    -----------
+    df : pandas DataFrame
+        DataFrame containing heading angles, segment IDs, and net motion values.
+    heading_col : str, optional
+        Name of the column containing heading angles (default: 'heading').
+    segment_col : str, optional
+        Name of the column containing block IDs (default: 'block').
+    motion_col : str, optional
+        Name of the column containing net motion values (default: 'net_motion').
+    motion_threshold : float, optional
+        Minimum net motion required to include the row in calculations (default: 0.5).
+    num_bins : int, optional
+        Number of bins to use for circular histogram (default: 30).
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame with a new column 'block_modal_heading' containing the mode heading for each block.
     """
-    n_neurons = len(filtered_columns)
-    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
-    
-    if n_neurons == 1:
-        axes = [axes]
-    
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
-    bins = np.linspace(0, 2 * np.pi, n_bins + 1)
-    
-    if unique_mode_headings is None:
-        unique_mode_headings = []
-        for seg in unique_seg:
-            mask = behav_df[segment_column] == seg
-            headings = behav_df.loc[mask, 'heading'].values
-            mode_heading = circular_mode(headings)
-            unique_mode_headings.append(mode_heading)
 
-    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
-        for i, seg in enumerate(unique_seg):
-            mask = behav_df[segment_column] == seg  # Use the specified column ('segment' or 'block')
-            headings = behav_df.loc[mask, 'heading']
-            values = neural_df.loc[mask, neuron]
-            
-            centers, means, errors = binned_stats(headings, values, bins)
-            
-            ax.errorbar(centers, means, yerr=errors, fmt='o-', 
-                        label=f'Segment {seg}', color=colors[i])
-        
-        ax.set_theta_zero_location('N')
-        ax.set_theta_direction(-1)
-        
-        ax.set_title(f"{neuron}")
-        if ax_idx == 0:
-            ax.set_ylabel("Neural Activity")
-        
-        if unique_mode_headings is not None:
-            for i, mode_hd in enumerate(unique_mode_headings):
-                ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], 
-                        color=colors[i], linewidth=2, linestyle='--', 
-                        label=f'Mode {i+1}: {mode_hd:.1f}°')
-        
-        if ax_idx == n_neurons - 1:
-            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
+    # Filter the DataFrame based on net motion threshold
+    df_filtered = df[df[motion_col] > motion_threshold]
     
-    plt.tight_layout()
+    # Get unique segment IDs after filtering
+    segments = df_filtered[segment_col].unique()
+
+    # Compute mode heading for each segment and store it in a new column
+    mode_headings = {}
+    for segment in segments:
+        segment_headings = df_filtered[df_filtered[segment_col] == segment][heading_col]
+        mode_headings[segment] = circular_mode(segment_headings, num_bins, method='histogram')
     
-    plt.savefig(f"{example_path_results}binned_heading_tuning_{trial_num}.png", dpi=300, bbox_inches='tight')
+    # Assign mode headings to the full dataframe
+    df['block_modal_heading'] = df[segment_col].map(mode_headings)
     
-    plt.show()
+    return df
+
 
 class PathSegmenter(ABC):
     @abstractmethod
@@ -1611,13 +1119,6 @@ class PathSegmentationFactory:
         else:
             raise ValueError(f"Unknown segmentation method: {method}")
 
-# Usage example:
-# factory = PathSegmentationFactory()
-# rho_segmenter = factory.create_segmenter('rho_threshold', rho_threshold=0.9)
-# manual_segmenter = factory.create_segmenter('manual', indices=[0, 100, 200, 300])
-# 
-# segmented_df_rho = rho_segmenter.segment(df)
-# segmented_df_manual = manual_segmenter.segment(df)
 
 def process_behavioral_variables(behav_df, example_path_results, trial_num):
     """
@@ -1884,91 +1385,169 @@ def label_blocks_5_v2(df, init_t, time_lengths, start_dir_1=np.pi/3, end_dir_1=2
     
     return df, block_boundaries
 
-
-def label_blocks(
-    df, initial_t, block_durations=None, use_time_based_transitions=True,
-    start_dir_1=np.pi/3, end_dir_1=2*np.pi/3, 
-    start_dir_2=4*np.pi/3, end_dir_2=5*np.pi/3
-):
+def compute_odor_metrics(df):
     """
-    Label blocks in a DataFrame based on odor onset, heading direction criteria,
-    and optionally time-based transitions, returning block boundary indices.
-
+    Adds 'odor_duration', 'past_interval', and 'odor_heading_avg' columns to the DataFrame.
+    
     Parameters:
-    -----------
-    df : pandas.DataFrame
-        DataFrame containing 'odor', 'heading', and 'time' columns.
-    initial_t : float
-        Time before which any odor onsets should be ignored for odor-based transitions.
-    block_durations : list, optional
-        Reference durations for each block in seconds [block1, block2, block3, block4, block5].
-        For blocks 2-5, these serve as maximum durations if time-based transitions are enabled.
-    use_time_based_transitions : bool, default True
-        Whether to apply time-based transitions for blocks 2-5.
-    start_dir_1, end_dir_1 : float
-        Start and end directions (in radians) for block 2 odor delivery.
-    start_dir_2, end_dir_2 : float
-        Start and end directions (in radians) for block 4 odor delivery.
+    df (pd.DataFrame): DataFrame containing 'odor_state', 'time', and 'heading' columns.
 
     Returns:
-    --------
-    tuple
-        (DataFrame with new 'block' column, list of block boundary indices)
+    pd.DataFrame: Updated DataFrame with new computed columns.
     """
-    df_copy = df.copy()
-    df_copy['block'] = 1
-    block_boundaries = [df_copy.index[0]]
-    current_block = 1
-    last_boundary = df_copy.index[0]
+    onset_indices = df.index[(df["odor_state"].shift(1, fill_value=0) == 0) & (df["odor_state"] == 1)]
+    offset_indices = df.index[(df["odor_state"].shift(1, fill_value=0) == 1) & (df["odor_state"] == 0)]
+
+    # Initialize new columns
+    df["odor_duration"] = np.nan
+    df["past_interval"] = np.nan
+    df["odor_heading_avg"] = np.nan
+
+    for onset_idx in onset_indices:
+        # Find the first offset after the onset
+        offset_idx = offset_indices[offset_indices > onset_idx].min()
+
+        if pd.notna(offset_idx):
+            # Calculate odor duration
+            df.loc[onset_idx, "odor_duration"] = df.loc[offset_idx, "time"] - df.loc[onset_idx, "time"]
+
+        # Calculate past interval
+        last_offset_idx = offset_indices[offset_indices < onset_idx].max()
+        if pd.notna(last_offset_idx):
+            past_interval = df.loc[onset_idx, "time"] - df.loc[last_offset_idx, "time"]
+        else:
+            past_interval = df.loc[onset_idx, "time"] - df["time"].iloc[0]
+        df.loc[onset_idx, "past_interval"] = past_interval
+
+        # Compute average heading during each odor-on period
+        if pd.notna(offset_idx):
+            avg_heading = circmean(df.loc[onset_idx:offset_idx, "heading"])
+            df.loc[onset_idx, "odor_heading_avg"] = avg_heading
+
+    return df
+
+def compute_odor_metrics(df, heading_window_size=5):
+    """
+    Adds 'odor_duration', 'past_interval', 'odor_heading_avg', and 'prior_odor_duration' 
+    columns to the DataFrame. The 'odor_heading_avg' now calculates the average heading 
+    over a defined window size before each odor onset.
     
-    # Find indices where odor is present and time is after initial_t
-    onset_indices = df_copy.index[(df_copy['odor'] > -1.5) & (df_copy['time'] > initial_t)].tolist()
+    Parameters:
+    df (pd.DataFrame): DataFrame containing 'odor_state', 'time', and 'heading' columns.
+    heading_window_size (float): Time window (in same units as 'time' column) before onset to average heading.
+
+    Returns:
+    pd.DataFrame: Updated DataFrame with new computed columns.
+    """
+    onset_indices = df.index[(df["odor_state"].shift(1, fill_value=0) == 0) & (df["odor_state"] == 1)]
+    offset_indices = df.index[(df["odor_state"].shift(1, fill_value=0) == 1) & (df["odor_state"] == 0)]
+
+    # Initialize new columns
+    df["odor_duration"] = np.nan
+    df["past_interval"] = np.nan
+    df["odor_heading_avg"] = np.nan
+    df["prior_odor_duration"] = np.nan
+
+    last_odor_duration = 0  # Default for the first odor encounter
+
+    for onset_idx in onset_indices:
+        # Find the first offset after the onset
+        offset_idx = offset_indices[offset_indices > onset_idx].min()
+
+        if pd.notna(offset_idx):
+            # Calculate odor duration
+            odor_duration = df.loc[offset_idx, "time"] - df.loc[onset_idx, "time"]
+            df.loc[onset_idx, "odor_duration"] = odor_duration
+
+            # Store current duration as the prior duration for the next encounter
+            df.loc[onset_idx, "prior_odor_duration"] = last_odor_duration
+            last_odor_duration = odor_duration  # Update for the next iteration
+        else:
+            df.loc[onset_idx, "prior_odor_duration"] = last_odor_duration  # Maintain previous duration if no offset found
+
+        # Calculate past interval
+        last_offset_idx = offset_indices[offset_indices < onset_idx].max()
+        if pd.notna(last_offset_idx):
+            past_interval = df.loc[onset_idx, "time"] - df.loc[last_offset_idx, "time"]
+        else:
+            past_interval = df.loc[onset_idx, "time"] - df["time"].iloc[0]
+        df.loc[onset_idx, "past_interval"] = past_interval
+
+        # Compute average heading over a defined window before odor onset
+        onset_time = df.loc[onset_idx, "time"]
+        window_start_time = onset_time - heading_window_size
+        heading_window = df[(df["time"] >= window_start_time) & (df["time"] < onset_time)]["heading"]
+
+        if not heading_window.empty:
+            df.loc[onset_idx, "odor_heading_avg"] = circmean(heading_window)
+
+    # Set first encounter's prior odor duration to 0
+    first_onset_idx = onset_indices.min()
+    if pd.notna(first_onset_idx):
+        df.loc[first_onset_idx, "prior_odor_duration"] = 0
+
+    return df
+
+
+def compute_event_metrics(df, odor_col="odor_state", time_col="time", window_size=5, w=0.5):
+    """
+    Computes event-specific metrics for each odor encounter and updates the original DataFrame.
     
-    # Function to check block transition conditions based on odor/heading
-    def check_odor_transition(idx, current_block):
-        heading = df_copy.loc[idx, 'heading']
-        odor_on = df_copy.loc[idx, 'odor'] > -1.5
-        
-        if current_block == 1:
-            return start_dir_1 <= heading <= end_dir_1 and odor_on
-        elif current_block == 2:
-            return start_dir_1 <= heading <= end_dir_1 and not odor_on
-        elif current_block == 3:
-            return start_dir_2 <= heading <= end_dir_2 and odor_on
-        elif current_block == 4:
-            return start_dir_2 <= heading <= end_dir_2 and not odor_on
-        return False
-    
-    # Process each index after start
-    for idx in df_copy.index[1:]:
-        # Check for time-based transition for blocks 2-5 if enabled
-        if use_time_based_transitions and block_durations is not None and current_block >= 2 and current_block <= 4:
-            elapsed_time = df_copy.loc[idx, 'time'] - df_copy.loc[last_boundary, 'time']
-            if elapsed_time >= block_durations[current_block-1]:
-                next_block = current_block + 1
-                # Skip zero-duration blocks
-                while next_block <= 5 and block_durations[next_block-1] == 0:
-                    next_block += 1
-                if next_block <= 5:
-                    df_copy.loc[idx:, 'block'] = next_block
-                    block_boundaries.append(idx)
-                    current_block = next_block
-                    last_boundary = idx
-                continue
-        
-        # Check for odor-based transition
-        if idx in onset_indices and check_odor_transition(idx, current_block):
-            next_block = current_block + 1
-            # Skip zero-duration blocks
-            while next_block <= 5 and block_durations[next_block-1] == 0:
-                next_block += 1
-            if next_block <= 5:
-                df_copy.loc[idx:, 'block'] = next_block
-                block_boundaries.append(idx)
-                current_block = next_block
-                last_boundary = idx
-    
-    return df_copy, block_boundaries
+    Parameters:
+    - df (pd.DataFrame): Time series with 'time' and binary 'odor_state'.
+    - odor_col (str): Column indicating odor state (1 = ON, 0 = OFF).
+    - time_col (str): Column with timestamps.
+    - window_size (int): Number of past events to use for burstiness score.
+    - w (float): Weighting factor for Novelty Score.
+
+    Returns:
+    - pd.DataFrame with additional columns for event-specific metrics.
+    """
+    df = df.sort_values(by=time_col).reset_index(drop=True)
+
+    # Identify rows where odor ON events occur
+    event_rows = df[odor_col] == 1
+    event_times = df.loc[event_rows, time_col].values
+    event_indices = df.index[event_rows].values
+
+    if len(event_times) < 2:
+        return df  # Not enough events to compute metrics
+
+    # Compute prior inter-event intervals
+    prior_intervals = np.diff(event_times, prepend=event_times[0])
+
+    # Compute prior durations
+    prior_durations = np.zeros_like(prior_intervals)
+    for i, idx in enumerate(event_indices):
+        off_idx = df.index[(df.index > idx) & (df[odor_col] == 0)]
+        if len(off_idx) > 0:
+            prior_durations[i] = df.loc[off_idx[0], time_col] - df.loc[idx, time_col]
+
+    # Compute event-specific metrics
+    S_n = prior_intervals  # Surprise Index
+    A_n = prior_durations / prior_intervals  # Adaptation Index
+    N_n = prior_intervals - w * prior_durations  # Novelty Score
+
+    # Compute Burstiness Score (using last K prior intervals)
+    B_n = np.array([
+        np.std(prior_intervals[max(0, i - window_size):i]) / np.mean(prior_intervals[max(0, i - window_size):i]) 
+        if i > 0 and np.mean(prior_intervals[max(0, i - window_size):i]) > 0 else np.nan
+        for i in range(len(prior_intervals))
+    ])
+
+    # Initialize new columns in the DataFrame with NaN
+    df["surprise_index"] = np.nan
+    df["adaptation_index"] = np.nan
+    df["novelty_score"] = np.nan
+    df["burstiness_score"] = np.nan
+
+    # Assign values only to rows where odor ON events occur
+    df.loc[event_indices, "surprise_index"] = S_n
+    df.loc[event_indices, "adaptation_index"] = A_n
+    df.loc[event_indices, "novelty_score"] = N_n
+    df.loc[event_indices, "burstiness_score"] = B_n
+
+    return df
 
 
 def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', return_mask=False):
@@ -2024,32 +1603,753 @@ def filter_by_motion(behav_df, motion_threshold=0.0, motion_col='net_motion', re
         return filtered_df, motion_mask
     return filtered_df
 
-# encoding, decoding models 
-# calcium imaging GLM 
+################################# Plotting #################################
+
+def plot_interactive_histogram(series):
+    fig, ax = plt.subplots()
+    counts, bins, patches = ax.hist(series, bins=30, color='skyblue', edgecolor='gray')
+    
+    threshold_line = ax.axvline(color='r', linestyle='--')
+    threshold_value = [None]  # Use a list to store the threshold value
+    
+    def onclick(event):
+        # Event handler that draws a vertical line where the user clicks and updates threshold_value
+        threshold_line.set_xdata([event.xdata, event.xdata])
+        threshold_value[0] = event.xdata  # Update the threshold value
+        fig.canvas.draw()
+    
+    # Connect the click event to the handler
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    
+    plt.xlabel('Values')
+    plt.ylabel('Frequency')
+    plt.title('Interactive Histogram')
+    plt.show()
+    
+    return threshold_value[0]  # Return the updated list containing the threshold value
+
+def plot_fly_traj(xPos, yPos, behav_df, label, example_path_results,trial_num):
+    x_range = max(xPos) - min(xPos)
+    y_range = max(yPos) - min(yPos)
+    aspect_ratio = y_range / x_range
+
+    # Set figure dimensions based on data range while keeping unit scale the same
+    fig_width = 10  # Width of figure in inches
+    fig_height = fig_width * aspect_ratio  # Height is scaled according to the aspect ratio of the data
+
+    plt.figure(figsize=(fig_width, fig_height))
+
+    if label in behav_df.columns:
+        # If the label exists, color the scatter plot based on the label values
+        plt.scatter(xPos, yPos, c=behav_df[label], s=3)
+        plt.colorbar()  # Optionally, add a color bar to indicate the mapping of color to label values
+    else:
+        # If the label does not exist, plot a normal scatter plot without coloring
+        plt.scatter(xPos, yPos, s=3)
+        label = "nothing"
+    plt.scatter(0, 0, color='red')  # Mark the origin
+
+    # Enforce equal aspect ratio so that one unit in x is the same as one unit in y
+    plt.gca().set_aspect('equal', adjustable='box')
+
+    plt.xlabel('x position')
+    plt.ylabel('y position')
+    plt.title('Fly Trajectory')
+
+    # Save the plot
+    # Construct the full file path
+    file_path = os.path.join(example_path_results, f'fly_trajectory_colored_by_{label}_trial_{str(trial_num)}.png')
+
+    # Extract the directory path
+    dir_path = os.path.dirname(file_path)
+
+    # Check if the directory exists, and create it if it doesn't
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    plt.savefig(file_path)
+    plt.close()  # Close the plot explicitly after saving to free resources
+
+def plot_fly_traj_interactive(xPos, yPos, behav_df, label, example_path_results, trial_num):
+    x_range = max(xPos) - min(xPos)
+    y_range = max(yPos) - min(yPos)
+    aspect_ratio = y_range / x_range
+
+    fig_width = 10
+    fig_height = fig_width * aspect_ratio
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    if label in behav_df.columns:
+        scatter = ax.scatter(xPos, yPos, c=behav_df[label], s=3)
+        plt.colorbar(scatter)
+    else:
+        ax.scatter(xPos, yPos, s=3)
+        label = "nothing"
+    ax.scatter(0, 0, color='red')
+
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_xlabel('x position')
+    ax.set_ylabel('y position')
+    ax.set_title('Fly Trajectory')
+
+    selected_points = []
+    line, = ax.plot([], [], 'ro-', linewidth=2, markersize=8)
+
+    def onclick(event):
+        if event.inaxes != ax:
+            return
+        selected_points.append((event.xdata, event.ydata))
+        x = [p[0] for p in selected_points]
+        y = [p[1] for p in selected_points]
+        line.set_data(x, y)
+        fig.canvas.draw()
+
+    def on_finish(event):
+        plt.close(fig)
+
+    fig.canvas.mpl_connect('button_press_event', onclick)
+
+    finish_ax = plt.axes([0.81, 0.05, 0.1, 0.075])
+    finish_button = Button(finish_ax, 'Finish')
+    finish_button.on_clicked(on_finish)
+
+    plt.show()
+
+    # Find indices of clicked points
+    clicked_indices = []
+    for point in selected_points:
+        distances = np.sqrt((xPos - point[0])**2 + (yPos - point[1])**2)
+        closest_index = np.argmin(distances)
+        clicked_indices.append(closest_index)
+
+    # Save the plot
+    file_path = os.path.join(example_path_results, f'fly_trajectory_colored_by_{label}_trial_{str(trial_num)}.png')
+    dir_path = os.path.dirname(file_path)
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    plt.figure(figsize=(fig_width, fig_height))
+    if label in behav_df.columns:
+        plt.scatter(xPos, yPos, c=behav_df[label], s=3)
+        plt.colorbar()
+    else:
+        plt.scatter(xPos, yPos, s=3)
+    plt.scatter(0, 0, color='red')
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.xlabel('x position')
+    plt.ylabel('y position')
+    plt.title('Fly Trajectory')
+    for i, idx in enumerate(clicked_indices):
+        plt.plot(xPos[idx], yPos[idx], 'ro', markersize=8)
+        plt.text(xPos[idx], yPos[idx], f' {i+1}', fontsize=12, verticalalignment='bottom')
+    plt.savefig(file_path)
+    plt.close()
+
+    return clicked_indices
+
+# binary variable on/offset aligned plot
+
+def plot_aligned_traces(
+    df, binary_col, query_col, time_col, color_col=None, align_to="on", window=(-1, 1), bins=None
+):
+    """
+    Plots query variable traces aligned to binary state ON or OFF transitions.
+    Colors traces by a third variable (if provided) and optionally bins it.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame containing the data.
+    binary_col : str
+        Column name of the binary state variable (0 or 1).
+    query_col : str
+        Column name of the query variable to be plotted.
+    time_col : str
+        Column name of the time variable.
+    color_col : str, optional
+        Column name of the variable used for coloring traces. If None, defaults to blue.
+    align_to : str, optional
+        Whether to align traces to binary state "on" (1) or "off" (0). Default is "on".
+    window : tuple, optional
+        Time window around the transition (before, after) in the same units as `time_col`. Default is (-1, 1).
+    bins : int, optional
+        Number of bins for the coloring variable. If None, uses continuous values.
+
+    Returns:
+    --------
+    None
+    """
+    # Detect transitions (state changes)
+    if align_to == "on":
+        transition_idxs = df.index[(df[binary_col] == 1) & (df[binary_col].shift(1) == 0)]
+    elif align_to == "off":
+        transition_idxs = df.index[(df[binary_col] == 0) & (df[binary_col].shift(1) == 1)]
+    else:
+        raise ValueError("align_to must be 'on' or 'off'.")
+
+    # Store all extracted traces
+    all_traces = []
+    time_shifts = []
+    colors = []
+
+    # Iterate over transitions
+    for idx in transition_idxs:
+        t0 = df.loc[idx, time_col]  # Get transition time
+        start_time, end_time = t0 + window[0], t0 + window[1]  # Define window range
+        subset = df[(df[time_col] >= start_time) & (df[time_col] <= end_time)]  # Extract data
+
+        if not subset.empty:
+            aligned_time = subset[time_col] - t0  # Align time to transition (t=0)
+            all_traces.append(subset[query_col].values)  # Store query variable values
+            time_shifts.append(aligned_time.values)  # Store aligned time values
+            colors.append(df.loc[idx, color_col] if color_col else None)  # Store color variable
+
+    # Convert to arrays
+    all_traces = np.array(all_traces, dtype=object)
+    time_shifts = np.array(time_shifts, dtype=object)
+
+    # Default to blue if no color column is provided
+    if color_col is None:
+        colors = None
+    else:
+        colors = np.array(colors)
+
+    # Handle binning of the color variable
+    if color_col and bins is not None:
+        bin_edges = np.linspace(colors.min(), colors.max(), bins + 1)
+        color_bins = np.digitize(colors, bin_edges) - 1  # Bin indices
+        unique_bins = np.unique(color_bins)
+    else:
+        color_bins = colors if colors is not None else None
+        unique_bins = np.unique(colors) if colors is not None else None
+
+    # Define colormap
+    cmap = cm.get_cmap("viridis", len(unique_bins)) if color_col else None
+    norm = mcolors.Normalize(vmin=colors.min(), vmax=colors.max()) if color_col else None
+
+    plt.figure(figsize=(8, 5))
+
+    # Plot individual traces
+    for i, (time_trace, query_trace) in enumerate(zip(time_shifts, all_traces)):
+        if color_col:
+            bin_idx = color_bins[i] if bins is not None else colors[i]
+            plt.plot(time_trace, query_trace, alpha=0.3, color=cmap(norm(bin_idx)))
+        else:
+            plt.plot(time_trace, query_trace, alpha=0.3, color="blue")
+
+    # Plot averaged traces within bins
+    if color_col and bins is not None:
+        for bin_idx in unique_bins:
+            bin_mask = color_bins == bin_idx
+            if np.sum(bin_mask) > 0:
+                avg_time = np.mean([time_shifts[i] for i in range(len(all_traces)) if bin_mask[i]], axis=0)
+                avg_trace = np.mean([all_traces[i] for i in range(len(all_traces)) if bin_mask[i]], axis=0)
+                plt.plot(avg_time, avg_trace, linewidth=2, color=cmap(norm(bin_idx)), label=f"Bin {bin_idx+1}")
+
+    # Labels and legend
+    plt.xlabel("Time (s, aligned to transition)")
+    plt.ylabel(query_col)
+    plt.axvline(0, color="k", linestyle="--", linewidth=1)  # Mark transition point
+    plt.title(f"{query_col} aligned to {binary_col} {align_to.upper()} transitions")
+    
+    if color_col:
+        plt.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), label=color_col)
+    if bins is not None and color_col:
+        plt.legend()
+    
+    plt.grid(True)
+    plt.show()
+
+
+def nonpara_plot_bybehav(nonpara_summ_df, combined_df, behavior_var, example_path_results, trial_num):
+    plt.figure(figsize=(6, 6))
+    plt.scatter(nonpara_summ_df['Mean'],nonpara_summ_df['IQR'],c= combined_df[behavior_var])
+    plt.colorbar()
+    plt.xlabel('mean')
+    plt.ylabel('iqr')
+    plt.title('mean vs. amplitude')
+
+    # Save the plot
+    plt.savefig(example_path_results+'mean_amp_' + behavior_var + str(trial_num) +'.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
+
+
+def plot_with_error_shading(df, example_path_results,trial_num):
+    # Set up the figure and subplots
+    fig, axs = plt.subplots(3, 1, figsize=(15, 10))
+    
+    # Plot phase
+    axs[0].plot(df['time'], df['phase'], label='Phase', color = 'orange')
+    phase_error_threshold = np.percentile(df['phase_error'], 90)
+    high_error_times = df['time'][df['phase_error'] > phase_error_threshold]
+    for time in high_error_times:
+        axs[0].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
+    axs[0].set_title('Phase')
+    axs[0].set_xlabel('Time')
+    axs[0].set_ylabel('Phase')
+    
+    # Plot amplitude
+    axs[1].plot(df['time'], df['amplitude'], label='Amplitude',color = 'red')
+    amp_error_threshold = np.percentile(df['amplitude_error'], 90)
+    high_error_times = df['time'][df['amplitude_error'] > amp_error_threshold]
+    for time in high_error_times:
+        axs[1].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
+    axs[1].set_title('Amplitude')
+    axs[1].set_xlabel('Time')
+    axs[1].set_ylabel('Amplitude')
+
+    # Plot baseline
+    axs[2].plot(df['time'], df['baseline'], label='Baseline', color = 'green')
+    base_error_threshold = np.percentile(df['baseline_error'], 90)
+    high_error_times = df['time'][df['baseline_error'] > base_error_threshold]
+    for time in high_error_times:
+        axs[2].axvline(x=time, color='gray', alpha=0.1)  # Adjust alpha for desired faintness
+    axs[2].set_title('Baseline')
+    axs[2].set_xlabel('Time')
+    axs[2].set_ylabel('Baseline')
+
+    plt.tight_layout()
+    plt.savefig(example_path_results+'parametric_fit' + str(trial_num) +'.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
+
+
+def generate_plots(df, variable_name, plot_width, plot_height, window_size=50, dpi=100):
+    plots = []
+    for i in range(len(df)):
+        # Create a figure with specified size and DPI
+        fig, ax = plt.subplots(figsize=(plot_width, plot_height), dpi=dpi)
+        
+        # Determine the range for the moving window
+        start_range = max(0, i - window_size)
+        end_range = i
+
+        # Plot the data within the moving window
+        ax.plot(df[variable_name][start_range:end_range])
+        ax.set_xlim(start_range, end_range)
+        
+        # Set other plot properties as needed
+        fig.canvas.draw()
+
+        # Convert plot to grayscale image
+        img = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        img_gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+        plots.append(img_gray)
+        plt.close(fig)
+    return plots
+
+def pairwise_corr(df,height,width):
+    fig, ax = plt.subplots(figsize = (height, width))
+    sns.pairplot(df, ax = ax)
+
+def phase_plot(df,height,width,ind_l, ind_h):
+    fig, ax = plt.subplots(figsize = (height, width))
+    ax.scatter(df.time[ind_l:ind_h], df.heading[ind_l:ind_h],color='blue', alpha = 0.5)
+    ax.plot(df.time,2*np.pi-df['phase_sinfit'], color = 'orange')
+
+
+def plot_time_series(neural_df, behav_df,example_path_results,trial_num):
+    neural_columns = len(neural_df.columns.drop('time'))
+    behav_columns = len(['fwV', 'yawV', 'sideV', 'heading'])
+    total_plots = neural_columns + behav_columns
+    
+    # Create a figure with subplots
+    fig, axs = plt.subplots(total_plots, 1, figsize=(12, 3 * total_plots), sharex=True)
+    
+    # Plot each column from neural_df as a subplot
+    for i, column in enumerate(neural_df.columns.drop('time')):
+        axs[i].plot(neural_df['time'], neural_df[column], label=column)
+        axs[i].set_ylabel(column)
+        axs[i].legend(loc='upper right')
+    
+    # Plot specified columns from behav_df as subplots
+    behav_columns = ['fwV', 'yawV', 'sideV', 'heading']
+    for j, column in enumerate(behav_columns, start=neural_columns):
+        if column in behav_df.columns:
+            axs[j].plot(behav_df['time'], behav_df[column], label=column, linestyle='--')
+            axs[j].set_ylabel(column)
+            axs[j].legend(loc='upper right')
+    
+    # Check if 'odor' column exists and shade where odor > 5
+    if 'odor' in behav_df.columns:
+        odor_mask = behav_df['odor'] > 5
+        # Apply shading to all subplots
+        for ax in axs:
+            ax.fill_between(behav_df['time'], ax.get_ylim()[0], ax.get_ylim()[1], where=odor_mask, color='red', alpha=0.3, transform=ax.get_xaxis_transform())
+    
+    # Set common labels
+    plt.xlabel('Time')
+    fig.suptitle('Neural and Behavioral Data Over Time', fontsize=16)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout to make room for the suptitle
+    
+    plt.savefig(example_path_results+'time_series_plotting' + str(trial_num) +'.png')
+    plt.close()  # Close the plot explicitly after saving to free resources
+
+# tuning curves 
+
+# Creating a circular histogram
+def plot_scatter(behavior_variable, filtered_columns, neural_activity, neurons_to_plot, num_bins=None, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    for j in neurons_to_plot:
+        #print(len(behavior_variable))
+        ax.scatter(behavior_variable,neural_activity[j,:])
+        ax.set_ylabel(filtered_columns[j])
+    ax.set_xlabel(behavior_variable.name)
+
+def tuning_curve_1d(behavior_variable, filtered_columns, neural_activity, neurons_to_plot, num_bins, ax=None):
+    """
+    Plot tuning curves on the given matplotlib Axes.
+
+    Parameters:
+    - behavior_variable: array-like, the behavioral variable to bin.
+    - neural_activity: 2D array-like, neural activity data with shape (neurons, observations).
+    - neurons_to_plot: list of int, indices of neurons to plot.
+    - num_bins: int, number of bins to divide the behavior variable into.
+    - ax: matplotlib.axes.Axes, the axes object to plot on. If None, a new figure is created.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Bin the behavioral variable
+    bins = np.linspace(np.min(behavior_variable), np.max(behavior_variable), num_bins+1)
+    bin_centers = 0.5 * (bins[1:] + bins[:-1])
+
+    # Plot tuning curves with SEM for selected neurons
+    for neuron_index in neurons_to_plot:
+        binned_activity = np.empty(num_bins)
+        binned_sem = np.empty(num_bins)
+        
+        for i in range(num_bins):
+            indices = np.where((behavior_variable >= bins[i]) & (behavior_variable < bins[i+1]))[0]
+            bin_data = neural_activity[neuron_index, indices]
+            binned_activity[i] = np.mean(bin_data)
+            binned_sem[i] = sem(bin_data)
+
+        ax.plot(bin_centers, binned_activity, label=f'{filtered_columns[neuron_index]}')
+        ax.fill_between(bin_centers, binned_activity - binned_sem, binned_activity + binned_sem, alpha=0.3)
+        ax.set_ylabel(filtered_columns[neuron_index])
+
+    # Setting labels and title
+    ax.set_xlabel(behavior_variable.name)
+    #ax.set_ylabel('Average Neural Activity')
+    #ax.legend()
+    #plt.savefig(example_path_results+'1d_tuning_curve_' + str(trial_num) +'.png')
+    #plt.close()  # Close the plot explicitly after saving to free resources
+
+
+def tuning_heatmap_2d(behavior_var1, behavior_var2, filtered_columns, neural_activity, neurons_to_plot, num_bins, example_path_results, trial_num, ax=None):
+    """
+    Plot a 2D tuning heatmap on the given matplotlib Axes.
+
+    Parameters:
+    - behavior_var1: array-like, the first behavioral variable to bin (x-axis).
+    - behavior_var2: array-like, the second behavioral variable to bin (y-axis).
+    - filtered_columns: list of str, names of the neurons.
+    - neural_activity: 2D array-like, neural activity data with shape (neurons, observations).
+    - neuron_to_plot: int, index of the neuron to plot.
+    - num_bins: int, number of bins to divide each behavior variable into.
+    - ax: matplotlib.axes.Axes, the axes object to plot on. If None, a new figure is created.
+
+    Returns:
+    - fig: matplotlib.figure.Figure, the figure object containing the plot.
+    - ax: matplotlib.axes.Axes, the axes object containing the plot.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 8))
+    else:
+        fig = ax.figure
+
+    # Bin the behavioral variables
+    bins1 = np.linspace(np.min(behavior_var1), np.max(behavior_var1), num_bins+1)
+    bins2 = np.linspace(np.min(behavior_var2), np.max(behavior_var2), num_bins+1)
+    
+    # Create a 2D array to store binned activity
+    binned_activity = np.zeros((num_bins, num_bins))
+    
+    # Bin the data and calculate mean activity
+    for i in range(num_bins):
+        for j in range(num_bins):
+            indices = np.where(
+                (behavior_var1 >= bins1[i]) & (behavior_var1 < bins1[i+1]) &
+                (behavior_var2 >= bins2[j]) & (behavior_var2 < bins2[j+1])
+            )[0]
+            binned_activity[j, i] = np.mean(neural_activity[neurons_to_plot, indices])
+    
+    # Create the heatmap
+    im = ax.imshow(binned_activity, origin='lower', aspect='auto', cmap='viridis')
+    
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label(f'Mean activity of {filtered_columns[neurons_to_plot]}')
+    
+    # Set labels and title
+    ax.set_xlabel(behavior_var1.name)
+    ax.set_ylabel(behavior_var2.name)
+    #ax.set_title(f'2D Tuning Heatmap for {filtered_columns[neuron_to_plot]}')
+    
+    # Set tick labels
+    ax.set_xticks(np.linspace(0, num_bins-1, 5))
+    ax.set_yticks(np.linspace(0, num_bins-1, 5))
+    ax.set_xticklabels([f'{x:.2f}' for x in np.linspace(np.min(behavior_var1), np.max(behavior_var1), 5)])
+    ax.set_yticklabels([f'{y:.2f}' for y in np.linspace(np.min(behavior_var2), np.max(behavior_var2), 5)])
+    save_path = f"{example_path_results}_{behavior_var1.name}_{behavior_var2.name}_heatmap_{trial_num}.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    #print(f"Figure saved to {save_path}")
+    return fig, ax
+
+
+def plot_tuning_curve_and_scatter(neural_activity, filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, segment_by_dir, segment_by_block, segment_id = None):
+    def generate_plots(neurons_to_plot, neural_activity, filtered_columns, behavior_variables, plot_func, ax, is_filtered=False):
+        for j in neurons_to_plot:
+            for i, behavior_variable in enumerate(behavior_variables):
+                plot_func(behavior_variable, filtered_columns, neural_activity, [j], num_bins if is_filtered else None, ax=ax[j, i])
+                if is_filtered and i == 3:
+                    ax[j, i].axvline(mean_angle, color='red', label='mean heading')
+                    ax[j, i].axvline(mode_angle, linestyle='--', color='red', label='mode heading')
+                    ax[j, i].legend()
+
+    neurons = neurons_to_plot if neural_activity.shape[0] > 1 else [0]
+
+    # First set of plots (tuning curves)
+    fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
+    if len(ax.shape) == 1:
+        ax = ax[np.newaxis, :]
+    generate_plots(neurons, neural_activity, filtered_columns, filtered_behavior_variables, tuning_curve_1d, ax, is_filtered=True)
+    plt.tight_layout()
+    if segment_by_dir:
+        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}_segment_{segment_id}.png")
+    elif segment_by_block: 
+        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}_block_{segment_id}.png")
+    else: 
+        plt.savefig(f"{example_path_results}1d_tuning_curve_{trial_num}.png")
+    plt.close()
+
+    # Second set of plots (scatter plots)
+    fig, ax = plt.subplots(len(neurons), num_behavioral_variables, figsize=(num_behavioral_variables * 5, len(neurons) * 5))
+    if len(ax.shape) == 1:
+        ax = ax[np.newaxis, :]
+    generate_plots(neurons, neural_activity, filtered_columns, behavioral_variables, plot_scatter, ax)
+    plt.tight_layout()
+    if segment_by_dir:
+        plt.savefig(f"{example_path_results}scatterplot_{trial_num}_segment_{segment_id}.png")
+    elif segment_by_block: 
+        plt.savefig(f"{example_path_results}scatterplot_{trial_num}_block_{segment_id}.png")
+    else: 
+        plt.savefig(f"{example_path_results}scatterplot_{trial_num}.png")
+    plt.close()
+    # plot forwardV vs. heading as sanity check
+    fig, ax = plt.subplots(figsize=(5,5))
+    generate_plots([0], np.array([behavioral_variables[0]]), [filtered_behavior_variables[0].name], [filtered_behavior_variables[3]], tuning_curve_1d, np.array([[ax]]), is_filtered=True)
+    plt.tight_layout()
+    plt.savefig(f"{example_path_results}1d_tuning_curve_ctrl_{trial_num}.png")
+    plt.close()
+
+def plot_heading_tuning_circular(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, segment_column='block'):
+    """
+    Plot heading tuning for different segments of a time series for multiple neurons.
+    
+    Parameters:
+    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment' (or 'block')
+    - neural_df: DataFrame containing neural data
+    - unique_seg: List of unique segment numbers to plot
+    - filtered_columns: List of neuron column names to plot
+    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
+    - segment_column: Column name in behav_df to use for segmenting the data ('segment' or 'block')
+    """
+    n_neurons = len(filtered_columns)
+    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
+    
+    # If there's only one neuron, axes will not be an array, so we convert it to a single-element list
+    if n_neurons == 1:
+        axes = [axes]
+    
+    # Define a color cycle for different segments
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
+
+    # Calculate circular mode headings if not provided
+    if unique_mode_headings is None:
+        unique_mode_headings = []
+        for seg in unique_seg:
+            mask = behav_df[segment_column] == seg
+            headings = behav_df.loc[mask, 'heading'].values
+            mode_heading = circular_mode(headings)
+            unique_mode_headings.append(mode_heading)
+
+    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
+        # Plot each segment
+        for i, seg in enumerate(unique_seg):
+            mask = behav_df[segment_column] == seg  # Use the specified column ('segment' or 'block') for masking
+            ax.scatter(behav_df.loc[mask, 'heading'], neural_df.loc[mask, neuron], 
+                       color=colors[i], alpha=0.1, label=f'Segment {seg}')
+        
+        ax.set_theta_zero_location('N')
+        ax.set_theta_direction(-1)
+        
+        ax.set_title(f"{neuron}")
+        if ax_idx == 0:  # Only set ylabel for the first subplot
+            ax.set_ylabel("Neural Activity")
+        
+        # Plot mode headings
+        for i, mode_hd in enumerate(unique_mode_headings):
+            ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], color=colors[i % len(colors)], 
+                    linewidth=2, linestyle='--', label=f'Mode {i+1}')
+        
+        if ax_idx == n_neurons - 1:  # Only add legend to the last subplot
+            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
+    
+    plt.tight_layout()
+    
+    # Save the figure
+    plt.savefig(f"{example_path_results}scatter_segment_circular_{trial_num}.png", dpi=300, bbox_inches='tight')
+
+def binned_stats(headings, values, bins):
+    """
+    Calculate binned averages and standard errors.
+    
+    Parameters:
+    - headings: array of angular data (in radians).
+    - values: corresponding values (e.g., MBON09L) to be averaged.
+    - bins: number of bins or a list of bin edges for angular data.
+    
+    Returns:
+    - bin_centers: array of bin centers (in radians).
+    - bin_means: array of mean values for each bin.
+    - bin_errors: array of standard errors for each bin.
+    """
+    binned, bin_edges = pd.cut(headings, bins=bins, labels=False, retbins=True)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    bin_means = []
+    bin_errors = []
+    for i in range(len(bin_edges) - 1):
+        bin_values = values[binned == i]
+        bin_means.append(np.mean(bin_values))
+        bin_errors.append(np.std(bin_values) / np.sqrt(len(bin_values)))
+
+    return bin_centers, np.array(bin_means), np.array(bin_errors)
+
+def plot_binned_heading_tuning(behav_df, neural_df, unique_seg, filtered_columns, example_path_results, trial_num, unique_mode_headings=None, n_bins=16, segment_column='block'):
+    """
+    Plot binned heading tuning for different segments of a time series for multiple neurons.
+    
+    Parameters:
+    - behav_df: DataFrame containing behavioral data including 'heading' and 'segment' (or 'block')
+    - neural_df: DataFrame containing neural data
+    - unique_seg: List of unique segment numbers to plot
+    - filtered_columns: List of neuron column names to plot
+    - unique_mode_headings: List of mode headings to plot as radial lines (optional)
+    - n_bins: Number of bins for circular data (default 16)
+    - segment_column: Column name in behav_df to use for segmenting the data ('segment' or 'block')
+    """
+    n_neurons = len(filtered_columns)
+    fig, axes = plt.subplots(1, n_neurons, figsize=(5*n_neurons, 5), subplot_kw={'projection': 'polar'})
+    
+    if n_neurons == 1:
+        axes = [axes]
+    
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_seg)))
+    bins = np.linspace(0, 2 * np.pi, n_bins + 1)
+    
+    if unique_mode_headings is None:
+        unique_mode_headings = []
+        for seg in unique_seg:
+            mask = behav_df[segment_column] == seg
+            headings = behav_df.loc[mask, 'heading'].values
+            mode_heading = circular_mode(headings)
+            unique_mode_headings.append(mode_heading)
+
+    for ax_idx, (ax, neuron) in enumerate(zip(axes, filtered_columns)):
+        for i, seg in enumerate(unique_seg):
+            mask = behav_df[segment_column] == seg  # Use the specified column ('segment' or 'block')
+            headings = behav_df.loc[mask, 'heading']
+            values = neural_df.loc[mask, neuron]
+            
+            centers, means, errors = binned_stats(headings, values, bins)
+            
+            ax.errorbar(centers, means, yerr=errors, fmt='o-', 
+                        label=f'Segment {seg}', color=colors[i])
+        
+        ax.set_theta_zero_location('N')
+        ax.set_theta_direction(-1)
+        
+        ax.set_title(f"{neuron}")
+        if ax_idx == 0:
+            ax.set_ylabel("Neural Activity")
+        
+        if unique_mode_headings is not None:
+            for i, mode_hd in enumerate(unique_mode_headings):
+                ax.plot([mode_hd, mode_hd], [0, ax.get_ylim()[1]], 
+                        color=colors[i], linewidth=2, linestyle='--', 
+                        label=f'Mode {i+1}: {mode_hd:.1f}°')
+        
+        if ax_idx == n_neurons - 1:
+            ax.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
+    
+    plt.tight_layout()
+    
+    plt.savefig(f"{example_path_results}binned_heading_tuning_{trial_num}.png", dpi=300, bbox_inches='tight')
+    
+    plt.show()
+
+
+
+############################################################################################################
+# Putting things together
 
 base_path = "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/standby/"
-folder_name = "20250125-6_MBON09_fly3_odor"
+folder_name = "20250212-3_FB4R-odor"
 example_path_data = base_path+f"{folder_name}/data/"
 example_path_results = base_path+f"{folder_name}/results/"
-#trial_num = 1
-#qualified_trials = find_complete_trials(example_path_data)
-#print(qualified_trials)
-#is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data,trial_num)
-#print(roi_df.head(10))
-    
 
-def main(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, segment_method='manual'):
+def make_behav_df(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, block_num, segment_method='manual', is_old=True, bar_jump=False):
+    # Load data and preprocess
+    if is_old:
+        is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data, trial_num)
+        behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor, trial_num, ball_d=9)
+        behav_df = reconstruct_path(behav_df, ball_d=9)
+    else:
+        behav_df, neural_df_new = load_matfile_to_df(example_path_data, folder_name, trial_num, is_odor_trial=True)
+        behav_df = rename_dataframe(behav_df)
+    # fly path
+    clicked_indices = plot_fly_traj_interactive(behav_df.xPos, behav_df.yPos, behav_df, 'odor', example_path_results, trial_num)
+    print("Indices of clicked points:", clicked_indices)
+    # label segment structure by different criteria
+    if segment_by_dir:
+        factory = PathSegmentationFactory()
+        manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
+        behav_df = manual_segmenter.segment(behav_df)
+        behav_df = calc_segment_modes_filtered_v2(behav_df,segment_col='segment')
+    elif segment_by_block:
+        if block_num == 3:
+            # TODO: still need to test block_3_v2
+            behav_df, block_boundaries = label_blocks_3_v2(behav_df, 0, [60, 60], detection_threshold=0.05,required_consecutive=5)
+        else:
+            behav_df, block_boundaries = label_blocks_5_v2(behav_df,50,time_lengths=[300,120,300],detection_threshold=0.05,required_consecutive=5)
+        behav_df = calc_segment_modes_filtered_v2(behav_df)
+    # calculate straightness
+    behav_df = calculate_theta_g_rho(behav_df)
+    # bar jump state detection
+    if bar_jump:
+        behav_df = compute_absolute_circular_diff(behav_df)
+        behav_df = detect_local_peaks(behav_df, init_t=10, prominence=0.1, min_time_gap=60)
+    # odor related variable processing
+    if 'odor_state' in behav_df.columns:
+        behav_df = compute_odor_metrics(behav_df)
+    return behav_df
+
+def main(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, block_num, segment_method='manual'):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
-    roi_kw, roi_kw2 = 'MBON', 'FB'
+    roi_kw, roi_kw2 = 'FB4R', 'MB'
     #tuning_whole_session = False
 
     # Load data and preprocess
     is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data, trial_num)
     behav_df = make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor, trial_num, ball_d=9)
-    xPos, yPos = reconstruct_path(behav_df, ball_d=9)
+    behav_df = reconstruct_path(behav_df, ball_d=9)
     #plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
-    clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
+    clicked_indices = plot_fly_traj_interactive(behav_df.xPos, behav_df.yPos, behav_df, 'odor', example_path_results, trial_num)
     print("Indices of clicked points:", clicked_indices)
     # Load and validate ROI data
     roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence = get_roi_seq(roi_df)
@@ -2080,19 +2380,23 @@ def main(example_path_data, example_path_results, trial_num, segment_by_dir, seg
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     elif segment_by_block:
-        behav_df = label_blocks(behav_df)
-    combined_df = combine_df(behav_df, neural_df)
+        if block_num == 3:
+            # TODO: still need to test block_3_v2
+            behav_df, block_boundaries = label_blocks_3_v2(behav_df, 0, [60, 60], detection_threshold=0.05,required_consecutive=5)
+        else:
+            behav_df, block_boundaries = label_blocks_5_v2(behav_df,50,time_lengths=[300,120,300],detection_threshold=0.05,required_consecutive=5)
+    combined_df = merge_dataframes(behav_df, neural_df)
     
     # Extract and plot data
     do_normalize = True
     roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
-    combined_df_trun, nonpara_summ_df = calc_nonpara(combined_df, roi_kw, roi_kw2, roi_mtx, False)
+    combined_df, nonpara_summ_df = calc_nonpara(combined_df, roi_kw, roi_kw2, roi_mtx, False)
     
     nonpara_plot_bybehav(nonpara_summ_df, nonpara_summ_df, behavior_var1, example_path_results, trial_num)
-    nonpara_plot_bybehav(nonpara_summ_df, combined_df_trun, behavior_var2, example_path_results, trial_num)
+    nonpara_plot_bybehav(nonpara_summ_df, combined_df, behavior_var2, example_path_results, trial_num)
     
     if roi_kw == 'hDeltaB' and do_normalize and roi_mtx is not None:
-        paramfit_df = fit_sinusoid(neural_df, roi_mtx)
+        combined_df, paramfit_df = fit_sinusoid(combined_df, roi_mtx)
         plot_with_error_shading(paramfit_df, example_path_results, trial_num)
     else:
         plot_time_series(neural_df, behav_df, example_path_results, trial_num)
@@ -2142,28 +2446,29 @@ def main(example_path_data, example_path_results, trial_num, segment_by_dir, seg
     else:
         # Calculate and plot statistics
         mean_angle, median_angle, mode_angle, behavioral_variables, filtered_behavior_variables, num_behavioral_variables = process_behavioral_variables(behav_df, example_path_results, trial_num)
-        fig, ax = tuning_heatmap_2d(behavioral_variables[3], behavioral_variables[2], filtered_columns, np.array(neural_activity.T), neurons_to_plot[0], num_bins, example_path_results, trial_num, ax=None)
-        #plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, segment_by_dir, segment_by_block)
+        fig, ax = tuning_heatmap_2d(behavioral_variables[3], behavioral_variables[0], filtered_columns, np.array(neural_activity.T), neurons_to_plot[0], num_bins, example_path_results, trial_num, ax=None)
+        plot_tuning_curve_and_scatter(np.array(neural_activity.T), filtered_columns, neurons_to_plot, behavioral_variables, filtered_behavior_variables, num_behavioral_variables, mean_angle, mode_angle, num_bins, example_path_results, trial_num, segment_by_dir, segment_by_block)
 
 #main(example_path_data, example_path_results, 1,False,False)
 
 
-def main_new(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, caiman_only, segment_method='manual',bar_jump=True):
+def main_new(example_path_data, example_path_results, trial_num, segment_by_dir, segment_by_block, block_num, caiman_only, segment_method='manual',bar_jump=True):
     # Define key variables
     behavior_var1, behavior_var2 = 'translationalV', 'heading'
-    roi_kw, roi_kw2 = 'MBON', 'FB'
+    roi_kw, roi_kw2 = 'FB4R', 'MB'
     #tuning_whole_session = False
 
     # Load data and preprocess
     #is_mat73, roi_df, dff_raw, kinematics_raw, preprocessed_vars_ds, preprocessed_vars_odor = load_intermediate_mat(example_path_data, trial_num)
-    behav_df, neural_df_new = load_matfile_to_df(example_path_data, folder_name, trial_num)
+    behav_df, neural_df_new = load_matfile_to_df(example_path_data, folder_name, trial_num, is_odor_trial=True)
     behav_df = rename_dataframe(behav_df)
     if bar_jump:
-        behav_df = detect_circular_jumps(behav_df, heading_col='heading', time_col='time', threshold=np.pi/3, min_jump_time=60, max_jump_time=80)
+        behav_df = compute_absolute_circular_diff(behav_df)
+        behav_df = detect_local_peaks(behav_df, init_t=10, prominence=0.1, min_time_gap=60)
     behav_df = make_df_behavior_new(behav_df)
-    xPos, yPos = reconstruct_path(behav_df, ball_d=9)
+    behav_df = reconstruct_path(behav_df, ball_d=9)
     #plot_fly_traj(xPos, yPos, behav_df, 'odor', example_path_results, trial_num)
-    clicked_indices = plot_fly_traj_interactive(xPos, yPos, behav_df, 'odor_state', example_path_results, trial_num)
+    clicked_indices = plot_fly_traj_interactive(behav_df.xPos, behav_df.yPos, behav_df, 'odor_state', example_path_results, trial_num)
     print("Indices of clicked points:", clicked_indices)
     # Load and validate ROI data
     if caiman_only:
@@ -2198,24 +2503,30 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
         manual_segmenter = factory.create_segmenter(segment_method, indices=clicked_indices)
         behav_df = manual_segmenter.segment(behav_df)
     elif segment_by_block:
-        behav_df, block_boundaries = label_blocks_5_v2(behav_df,50,time_lengths=[350,60,350],detection_threshold=0.05,required_consecutive=5)
+        if block_num == 3:
+            # TODO: still need to test block_3_v2
+            behav_df, block_boundaries = label_blocks_3_v2(behav_df, 0, [60, 60], detection_threshold=0.05,required_consecutive=5)
+        else:
+            behav_df, block_boundaries = label_blocks_5_v2(behav_df,50,time_lengths=[300,120,300],detection_threshold=0.05,required_consecutive=5)
+    
+    # TODO: whether we need/where we need filter by motion
     # Get both filtered data and mask
-    motion_threshold=1
+    '''motion_threshold=1
     behav_df, motion_mask = filter_by_motion(behav_df, 
                                                 motion_threshold, 
                                                 return_mask=True)
 
-# Apply same mask to neural_df if needed
-    neural_df = neural_df[motion_mask]
-    combined_df = combine_df(behav_df, neural_df)
+    # Apply same mask to neural_df if needed
+    neural_df = neural_df[motion_mask]'''
+    combined_df = merge_dataframes(behav_df, neural_df)
     
     # Extract and plot data
     do_normalize = True
     roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
-    combined_df_trun, nonpara_summ_df = calc_nonpara(combined_df, roi_kw, roi_kw2, roi_mtx, False)
+    combined_df, nonpara_summ_df = calc_nonpara(combined_df, roi_kw, roi_kw2, roi_mtx, False)
     
     nonpara_plot_bybehav(nonpara_summ_df, nonpara_summ_df, behavior_var1, example_path_results, trial_num)
-    nonpara_plot_bybehav(nonpara_summ_df, combined_df_trun, behavior_var2, example_path_results, trial_num)
+    nonpara_plot_bybehav(nonpara_summ_df, combined_df, behavior_var2, example_path_results, trial_num)
     
     if roi_kw == 'hDeltaB' and do_normalize and roi_mtx is not None:
         paramfit_df = fit_sinusoid(neural_df, roi_mtx)
@@ -2273,7 +2584,7 @@ def main_new(example_path_data, example_path_results, trial_num, segment_by_dir,
 
 
 
-#main_new(example_path_data, example_path_results,3,False, False,False)
+#main_new(example_path_data, example_path_results,1,False, False,False)
 
 def calc_peak_correlation_full(series1, series2, max_lag):
     # Ensure series are zero-mean for meaningful correlation results
@@ -2332,7 +2643,7 @@ def calc_correlation_batch(example_path_data, example_path_results,trial_num,cor
     if not any('MBON09' in col for col in neural_df.columns):
         print('no MBON09 columns')
         return
-    combined_df = combine_df(behav_df, neural_df)
+    combined_df = merge_dataframes(behav_df, neural_df)
     roi_kw = 'hDeltaB'
     if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/FR1_imaging/20230719-3_FR1_GCAMP7f_odor_odor_apple_width10_fly2/data/":
         roi_kw = 'hDeltaB'
@@ -2380,14 +2691,14 @@ def save_dfs(example_path_data, example_path_results,trial_num,hdf5_file_path,fo
     if example_path_data == "//research.files.med.harvard.edu/neurobio/wilsonlab/Jingxuan/processed/dan_imaging/20220824-5_MB196B_GCAMP7f_long/data/":
         dff_all_rois = dff_all_rois[[0,2,3],:]
     neural_df = make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence, fr1_sequence)
-    combined_df = combine_df(behav_df, neural_df)
+    combined_df = merge_dataframes(behav_df, neural_df)
     roi_kw = 'hDeltaB'
     roi_kw2 = None
     do_normalize = True
     roi_mtx = extract_heatmap(combined_df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num)
     if not (roi_mtx is None) and do_normalize:
         paramfit_df = fit_sinusoid(neural_df, roi_mtx)
-    combined_df = combine_df(combined_df, paramfit_df)
+    combined_df = merge_dataframes(combined_df, paramfit_df)
     combined_df.to_hdf(hdf5_file_path, key=hdf_key, mode='a')
         
 

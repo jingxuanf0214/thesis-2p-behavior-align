@@ -1,0 +1,151 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import optimize
+from sklearn.preprocessing import StandardScaler
+from scipy.stats import iqr
+import seaborn as sns
+
+
+def calc_nonpara(combined_df, roi_kw, roi_kw2, roi_mtx=None, do_truncate=False):
+    if do_truncate:
+        combined_df = combined_df[(combined_df["fwV"] > 0.2) | (combined_df["fwV"] < -0.2)]
+    
+    sigma = 5
+    
+    # Assuming smoothed columns already exist in the dataframe
+    smooth_fwV = combined_df.get('fwV_smoothed', apply_gaussian_smoothing(combined_df.fwV, sigma))
+    smooth_sideV = combined_df.get('sideV_smoothed', apply_gaussian_smoothing(combined_df.sideV, sigma))
+    
+    translational_speed = np.sqrt(smooth_fwV**2 + smooth_sideV**2)
+    forward_speed = np.abs(smooth_fwV)
+    
+    if roi_mtx is None:
+        if roi_kw2:
+            filtered_columns = [col for col in combined_df.columns if roi_kw in col and roi_kw2 not in col]
+            neural_df_rois = combined_df[filtered_columns]
+        else:
+            neural_df_rois = combined_df[[col for col in combined_df.columns if roi_kw.lower() in col.lower()]]
+        
+        row_means = neural_df_rois.apply(np.mean, axis=1)
+        row_iqrs = neural_df_rois.apply(lambda x: iqr(x, interpolation='midpoint'), axis=1)
+    else:
+        row_means = np.mean(roi_mtx, axis=1)
+        row_iqrs = iqr(roi_mtx, interpolation='midpoint', axis=1)
+    
+    # Combine mean and IQR into a new DataFrame
+    stats_df = pd.DataFrame({'Mean': row_means, 'IQR': row_iqrs, 'translationalV': translational_speed, 'fwV': forward_speed})
+    
+    # Save stats to the original dataframe with unique column names
+    combined_df['mean_stat'] = row_means
+    combined_df['iqr_stat'] = row_iqrs
+    combined_df['translational_speed'] = translational_speed
+    combined_df['forward_speed'] = forward_speed
+    
+    return combined_df, stats_df
+
+
+def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, trial_num):
+    if roi_kw2:
+        filtered_columns = [col for col in df.columns if roi_kw in col and roi_kw2 not in col]
+        roi_mtx = df[filtered_columns]
+    else:
+        roi_mtx = df[[col for col in df.columns if roi_kw.lower() in col.lower()]]
+    if roi_mtx.empty:
+        return None
+    if do_normalize:
+        scaler = StandardScaler()
+        roi_mtx = scaler.fit_transform(roi_mtx)
+        plt.figure(figsize=(10, 6))
+        sns.heatmap(np.transpose(roi_mtx))
+        plt.savefig(example_path_results+'heatmap_norm' + str(trial_num)+ '.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
+    elif not do_normalize:
+        plt.figure(figsize=(10, 6))
+        sns.heatmap(np.transpose(roi_mtx))
+        plt.savefig(example_path_results+'heatmap_nonnorm' + str(trial_num)+ '.png')
+        plt.close()  # Close the plot explicitly after saving to free resources
+    return roi_mtx
+
+
+# for EPG type imaging only 
+def calculate_pva_epg(activity_matrix):
+    num_neurons, time_steps = activity_matrix.shape
+    directions = np.linspace(0, 2*np.pi, num_neurons//2, endpoint=False)
+    
+    # Repeat directions for both halves of the neuron population
+    directions = np.tile(directions, 2)
+    
+    # Calculate vector components for each neuron's activity
+    x_components = np.cos(directions)[:, np.newaxis] * activity_matrix
+    y_components = np.sin(directions)[:, np.newaxis] * activity_matrix
+    
+    # Sum components across neurons for each time step
+    sum_x = np.sum(x_components, axis=0)
+    sum_y = np.sum(y_components, axis=0)
+    
+    # Calculate PVA for each time step
+    pva_phase = np.arctan2(sum_y, sum_x)  # Phase in radians
+    pva_amplitude = np.sqrt(sum_x**2 + sum_y**2)  # Magnitude of the vector
+    return pva_phase, pva_amplitude
+
+def calculate_pva_hdeltab(activity_matrix):
+    num_neurons, time_steps = activity_matrix.shape
+    directions = np.linspace(0, 2*np.pi, num_neurons, endpoint=False)
+    
+    # Repeat directions for both halves of the neuron population
+    #directions = np.tile(directions, 2)
+    
+    # Calculate vector components for each neuron's activity
+    x_components = np.cos(directions)[:, np.newaxis] * activity_matrix
+    y_components = np.sin(directions)[:, np.newaxis] * activity_matrix
+    
+    # Sum components across neurons for each time step
+    sum_x = np.sum(x_components, axis=0)
+    sum_y = np.sum(y_components, axis=0)
+    
+    # Calculate PVA for each time step
+    pva_phase = np.arctan2(sum_y, sum_x)  # Phase in radians
+    pva_amplitude = np.sqrt(sum_x**2 + sum_y**2)  # Magnitude of the vector
+    return pva_phase, pva_amplitude
+
+
+def fit_sinusoid(neural_df, roi_mtx):
+    def test_func(x, dist, amp, phi):
+        return dist + amp * np.cos(x + phi)
+
+    timestamp, num_roi = np.shape(roi_mtx)
+    x_p = np.linspace(0, 2 * np.pi, num=num_roi)
+    trial_len = timestamp
+
+    phase_sinfit = np.zeros(trial_len)
+    base_sinfit = np.zeros(trial_len)
+    amp_sinfit = np.zeros(trial_len)
+    phase_perr = np.zeros(trial_len)
+    base_perr = np.zeros(trial_len)
+    amp_perr = np.zeros(trial_len)
+
+    for i in range(trial_len):
+        params, params_covariance = optimize.curve_fit(test_func, x_p, roi_mtx[i, :], maxfev=5000)
+        phase_sinfit[i] = x_p[np.argmax(test_func(x_p, params[0], params[1], params[2]))]
+        amp_sinfit[i] = np.abs(params[1])
+        base_sinfit[i] = params[0]
+        perr = np.sqrt(np.diag(params_covariance))
+        phase_perr[i] = perr[2]
+        base_perr[i] = perr[0]
+        amp_perr[i] = perr[1]
+
+    paramfit_df = pd.DataFrame({
+        'time': neural_df['time'], 
+        'phase': phase_sinfit, 
+        'baseline': base_sinfit, 
+        'amplitude': amp_sinfit, 
+        'phase_error': phase_perr, 
+        'baseline_error': base_perr, 
+        'amplitude_error': amp_perr
+    })
+
+    # Merge paramfit_df onto neural_df based on 'time'
+    merged_df = neural_df.merge(paramfit_df, on='time', how='left')
+
+    return merged_df, paramfit_df
