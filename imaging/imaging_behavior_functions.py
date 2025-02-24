@@ -368,6 +368,36 @@ def get_roi_seq(roi_df):
         fr1_seq =  None 
     return np.array(roi_names), hdeltab_index, epg_index, fr1_index,hdeltab_seq, epg_seq,fr1_seq
 
+
+def get_roi_seq_2(roi_df, trial_number):
+    roi_df['trialNum'] = roi_df['trialNum'].apply(lambda x: x[0][0])
+    
+    # Filter the DataFrame to only include rows with the specified trial number
+    roi_df = roi_df[roi_df['trialNum'] == trial_number].reset_index(drop=True)
+    
+    roi_names = roi_df['roiName'].apply(lambda x: x[0])
+    roi_hdeltab = roi_names[roi_names.str.contains('hDeltaB', case=False)]
+    hdeltab_index = roi_hdeltab.index
+    roi_epg = roi_names[roi_names.str.contains('EPG')]
+    epg_index = roi_epg.index
+    roi_fr1 = roi_names[roi_names.str.contains('FR1') & ~roi_names.str.contains('CRE')]
+    fr1_index = roi_fr1.index
+    
+    hdeltab_seq = roi_hdeltab.str.extract(r'_(\d+)')[0].astype(int).to_numpy()
+    
+    if epg_index.size > 0:
+        epg_seq = roi_epg.str.extract(r'_(\d+)')[0].astype(int).to_numpy()
+    else:
+        epg_seq = None 
+    
+    if fr1_index.size > 0:
+        fr1_seq = roi_fr1.str.extract(r'_(\d+)')[0].astype(int).to_numpy()
+    else:
+        fr1_seq = None 
+    
+    return np.array(roi_names), hdeltab_index, epg_index, fr1_index, hdeltab_seq, epg_seq, fr1_seq
+
+
 def sort_rois(dff_tosort, roi_names, query_idx, query_seq):
     sorting_indices = np.argsort(query_seq)
     segment_to_sort = dff_tosort[query_idx]
@@ -751,6 +781,18 @@ def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, tri
         plt.close()  # Close the plot explicitly after saving to free resources
     return roi_mtx
 
+
+def extract_heatmap_2(df, roi_kw, roi_kw2):
+    if roi_kw2:
+        filtered_columns = [col for col in df.columns if roi_kw in col and roi_kw2 not in col]
+        roi_mtx = df[filtered_columns]
+    else:
+        roi_mtx = df[[col for col in df.columns if roi_kw.lower() in col.lower()]]
+    if roi_mtx.empty:
+        return None
+    scaler = StandardScaler()
+    roi_mtx = scaler.fit_transform(roi_mtx)
+    return roi_mtx
 
 # for EPG type imaging only 
 def calculate_pva_epg(activity_matrix):
