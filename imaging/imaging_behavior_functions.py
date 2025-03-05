@@ -382,6 +382,8 @@ def get_roi_seq_2(roi_df, trial_number):
     epg_index = roi_epg.index
     roi_fr1 = roi_names[roi_names.str.contains('FR1') & ~roi_names.str.contains('CRE')]
     fr1_index = roi_fr1.index
+    roi_fb4r = roi_names[roi_names.str.contains('FB4R') & ~roi_names.str.contains('CRE')]
+    fb4r_index = roi_fb4r.index
     
     hdeltab_seq = roi_hdeltab.str.extract(r'_(\d+)')[0].astype(int).to_numpy()
     
@@ -394,8 +396,11 @@ def get_roi_seq_2(roi_df, trial_number):
         fr1_seq = roi_fr1.str.extract(r'_(\d+)')[0].astype(int).to_numpy()
     else:
         fr1_seq = None 
-    
-    return np.array(roi_names), hdeltab_index, epg_index, fr1_index, hdeltab_seq, epg_seq, fr1_seq
+    if fb4r_index.size > 0:
+        fb4r_seq = roi_fb4r.str.extract(r'_(\d+)')[0].astype(int).to_numpy()
+    else:
+        fb4r_seq = None 
+    return np.array(roi_names), hdeltab_index, epg_index, fr1_index, hdeltab_seq, epg_seq, fr1_seq,fb4r_seq
 
 
 def sort_rois(dff_tosort, roi_names, query_idx, query_seq):
@@ -418,7 +423,7 @@ def load_dff_raw(is_mat73, dff_raw):
         dff_all_rois = dff_rois[0]
     return dff_all_rois, dff_time
 
-def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, hdeltab_sequence, epg_sequence,fr1_sequence):
+def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, fb4r_index, hdeltab_sequence, epg_sequence,fr1_sequence,fb4r_seq):
     #TODO
     sort_rois(dff_all_rois, roi_names, hdeltab_index, hdeltab_sequence)
     if epg_index.size > 0:
@@ -427,6 +432,10 @@ def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, 
         pass
     if fr1_index.size > 0:
         sort_rois(dff_all_rois, roi_names, fr1_index, fr1_sequence)
+    else:
+        pass
+    if fb4r_index.size > 0:
+        sort_rois(dff_all_rois, roi_names, fb4r_index, fb4r_seq)
     else:
         pass
     # Create a new DataFrame for the reordered data
