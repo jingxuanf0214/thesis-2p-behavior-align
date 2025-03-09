@@ -400,7 +400,7 @@ def get_roi_seq_2(roi_df, trial_number):
         fb4r_seq = roi_fb4r.str.extract(r'_(\d+)')[0].astype(int).to_numpy()
     else:
         fb4r_seq = None 
-    return np.array(roi_names), hdeltab_index, epg_index, fr1_index, hdeltab_seq, epg_seq, fr1_seq,fb4r_seq
+    return np.array(roi_names), hdeltab_index, epg_index, fr1_index, fb4r_index, hdeltab_seq, epg_seq, fr1_seq,fb4r_seq
 
 
 def sort_rois(dff_tosort, roi_names, query_idx, query_seq):
