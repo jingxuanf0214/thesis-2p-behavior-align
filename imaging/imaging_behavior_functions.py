@@ -32,17 +32,7 @@ from scipy.signal import find_peaks
 
 ################################# Loading #################################
 
-def is_notebook():
-    try:
-        from IPython import get_ipython
-        if 'IPKernelApp' not in get_ipython().config:  # Kernel not running
-            return False
-    except ImportError:
-        return False  # IPython is not installed
-    except AttributeError:
-        return False  # get_ipython() didn't return Configurable, not in notebook
 
-    return True
 
 def find_complete_trials(path_to_folder):
     # List all .mat files in the folder
@@ -423,9 +413,13 @@ def load_dff_raw(is_mat73, dff_raw):
         dff_all_rois = dff_rois[0]
     return dff_all_rois, dff_time
 
-def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, fb4r_index, hdeltab_sequence, epg_sequence,fr1_sequence,fb4r_seq):
+def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, fr1_index, fb4r_index, hdeltab_sequence, epg_sequence,fr1_sequence,fb4r_sequence):
     #TODO
-    sort_rois(dff_all_rois, roi_names, hdeltab_index, hdeltab_sequence)
+    if hdeltab_index.size > 0:
+        #print(1)
+        sort_rois(dff_all_rois, roi_names, hdeltab_index, hdeltab_sequence)
+    else:
+        pass
     if epg_index.size > 0:
         sort_rois(dff_all_rois, roi_names, epg_index, epg_sequence)
     else:
@@ -435,12 +429,13 @@ def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, 
     else:
         pass
     if fb4r_index.size > 0:
-        sort_rois(dff_all_rois, roi_names, fb4r_index, fb4r_seq)
+        sort_rois(dff_all_rois, roi_names, fb4r_index, fb4r_sequence)
     else:
         pass
     # Create a new DataFrame for the reordered data
     neural_df = pd.DataFrame()
     neural_df['time'] = np.squeeze(dff_time)
+    #print(len(dff_all_rois))
     # Add each sorted ROI data to the DataFrame with the specified naming convention
     for i, roi_data in enumerate(dff_all_rois):
         column_name =  roi_names[i] # Generate column name starting from hDeltaB1
@@ -512,11 +507,9 @@ def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial
     df['abssideV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_sideSpeedDown2']))/(2*np.pi)
     df['absyawV'] = circum*np.abs(np.squeeze(preprocessed_vars_ds['ftT_yawSpeedDown2']))/(2*np.pi)
     df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
-    in_notebook = is_notebook()
-    if in_notebook:
-        threshold = np.percentile(df.net_motion,5)
-    else:
-        threshold = plot_interactive_histogram(df.net_motion)
+    #in_notebook = is_notebook()
+    #if in_notebook:
+    threshold = np.percentile(df.net_motion,2)
     df['net_motion_state'] = (df['net_motion']>threshold).astype(int)
     df['heading_adj'] = np.unwrap(df['heading'])
     if preprocessed_vars_odor != None:
@@ -534,11 +527,10 @@ def make_df_behavior_new(df):
     df['abssideV'] = np.abs(df['sideV'])
     df['absyawV'] = np.abs(df['yawV'])
     df['net_motion'] = df['abssideV']+df['absyawV']+np.abs(df['fwV'])
-    in_notebook = is_notebook()
-    if in_notebook:
-        threshold = np.percentile(df.net_motion,5)
-    else:
-        threshold = plot_interactive_histogram(df.net_motion)
+    #in_notebook = is_notebook()
+    #if in_notebook:
+    threshold = np.percentile(df.net_motion,2)
+   
     df['net_motion_state'] = (df['net_motion']>threshold).astype(int)
     #df['heading_adj'] = np.unwrap(df['heading'])
     return df 
@@ -790,6 +782,17 @@ def extract_heatmap(df, roi_kw, roi_kw2, do_normalize, example_path_results, tri
         plt.close()  # Close the plot explicitly after saving to free resources
     return roi_mtx
 
+def extract_roi_mtx(df, roi_kw, roi_kw2):
+    if roi_kw2:
+        filtered_columns = [col for col in df.columns if roi_kw in col and roi_kw2 not in col]
+        roi_mtx = df[filtered_columns]
+    else:
+        roi_mtx = df[[col for col in df.columns if roi_kw.lower() in col.lower()]]
+    if roi_mtx.empty:
+        return None
+    scaler = StandardScaler()
+    roi_mtx = scaler.fit_transform(roi_mtx)
+    return roi_mtx
 
 def extract_heatmap_2(df, roi_kw, roi_kw2):
     if roi_kw2:
