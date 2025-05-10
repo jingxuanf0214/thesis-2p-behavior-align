@@ -418,48 +418,64 @@ def make_df_neural(dff_all_rois, dff_time, roi_names, hdeltab_index, epg_index, 
     neural_df.drop(columns=cols_to_drop, inplace=True)
     return neural_df
 
+import numpy as np
+import pandas as pd
+
 def merge_dataframes(behav_df, neural_df, method='interp', tolerance=0.05):
     """
-    Merges neural data onto behavioral data using either linear interpolation or nearest time matching.
-
+    Merges neural data onto behavioral data using one of three methods:
+    
     Parameters:
     -----------
     behav_df : pd.DataFrame
-        DataFrame containing 'time' column and behavioral data.
+        DataFrame containing a 'time' column and behavioral data.
     neural_df : pd.DataFrame
-        DataFrame containing 'time' column and neural data.
+        DataFrame containing a 'time' column and neural data.
     method : str, optional
         Method for merging:
         - 'interp' (default): Uses linear interpolation to estimate neural data at exact behav_df['time'] points.
-        - 'nearest': Uses nearest available timestamp in neural_df within the given tolerance.
+        - 'nearest': Uses the nearest available timestamp in neural_df within the given tolerance.
+        - 'direct': Directly combines the dataframes row-by-row using the time stamps from behav_df.
     tolerance : float, optional
-        Maximum allowable time difference for nearest neighbor matching (only used for 'nearest' method).
+        Maximum allowable time difference for the nearest neighbor matching (only used for 'nearest' method).
         
     Returns:
     --------
     pd.DataFrame
         Merged DataFrame with neural data aligned to behav_df['time'].
     """
-    if method not in ['interp', 'nearest']:
-        raise ValueError("Invalid method. Choose 'interp' (interpolation) or 'nearest' (nearest matching).")
+    if method not in ['interp', 'nearest', 'direct']:
+        raise ValueError("Invalid method. Choose 'interp', 'nearest', or 'direct'.")
 
+    # Copy the behavioral dataframe as basis for merging
     merged_df = behav_df.copy()
 
     if method == 'interp':
-        # Linear interpolation method
+        # Linear interpolation method: interpolate each neural column based on behav_df['time']
         for col in neural_df.columns:
-            if col != 'time':  # Skip the 'time' column
+            if col != 'time':  # Skip the 'time' column from neural_df
                 merged_df[col] = np.interp(behav_df['time'], neural_df['time'], neural_df[col])
 
     elif method == 'nearest':
-        # Ensure time columns are float for accurate merging
+        # Ensure time columns are floats for accurate merging
         behav_df['time'] = behav_df['time'].astype(float)
         neural_df['time'] = neural_df['time'].astype(float)
         
-        # Use merge_asof to align based on nearest time match
+        # Merge based on the nearest matching timestamp within the specified tolerance
         merged_df = pd.merge_asof(behav_df, neural_df, on='time', tolerance=tolerance, direction='nearest')
 
+    elif method == 'direct':
+        # Direct combination method: combine the dataframes row-wise using behav_df's time column
+        if len(behav_df) != len(neural_df):
+            raise ValueError("For direct merging, both dataframes must have the same number of rows.")
+        
+        # For direct combination, we simply copy the neural data columns (ignoring the neural time column)
+        for col in neural_df.columns:
+            if col != 'time':  # Skip neural_df's time column since we use behav_df's
+                merged_df[col] = neural_df[col].values
+
     return merged_df
+
 
 def make_df_behavior(dff_raw, preprocessed_vars_ds, preprocessed_vars_odor,trial_num,ball_d = 9):
     circum = ball_d * np.pi

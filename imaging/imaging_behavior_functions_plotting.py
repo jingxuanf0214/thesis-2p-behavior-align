@@ -62,12 +62,13 @@ def plot_fly_traj(xPos, yPos, behav_df, label, colormap):
     
     plt.figure(figsize=(fig_width, fig_height))
     if label in behav_df.columns:
-        plt.scatter(xPos, yPos, c=behav_df[label],cmap=colormap, s=6)
+        plt.scatter(behav_df.xPos[behav_df[label]==0], behav_df.yPos[behav_df[label]==0], color = 'gray', s=1,alpha=0.6)
+        plt.scatter(behav_df.xPos[behav_df[label]==1], behav_df.yPos[behav_df[label]==1], color = 'red', s=1,alpha=0.5)
         plt.colorbar()
     else:
-        plt.scatter(xPos, yPos, s=3)
+        plt.scatter(xPos, yPos, s=1,color='black')
         label = "nothing"
-    plt.scatter(0, 0, color='red')
+    plt.scatter(0, 0, color='black')
     
     plt.gca().set_aspect('equal', adjustable='box')
     plt.xlabel('x position')
